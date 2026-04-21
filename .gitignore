@@ -1,0 +1,8 @@
+.env
+.venv/
+artifacts/
+data/results.csv
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
