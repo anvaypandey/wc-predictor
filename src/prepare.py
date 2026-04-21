@@ -1,13 +1,39 @@
 import pandas as pd
 from collections import defaultdict, deque
 
+# Tournament importance tier — used as a feature and to filter training data.
+# Friendlies (tier 1) are kept for rolling stats but excluded from training.
+TOURNAMENT_TIERS: dict[str, int] = {
+    "FIFA World Cup":                        5,
+    "UEFA Euro":                             4,
+    "Copa América":                          4,
+    "African Cup of Nations":                4,
+    "AFC Asian Cup":                         4,
+    "Gold Cup":                              4,
+    "CONCACAF Championship":                 4,
+    "OFC Nations Cup":                       4,
+    "FIFA World Cup qualification":          3,
+    "UEFA Euro qualification":               3,
+    "African Cup of Nations qualification":  3,
+    "AFC Asian Cup qualification":           3,
+    "Gold Cup qualification":                3,
+    "CONCACAF Nations League":               3,
+    "UEFA Nations League":                   3,
+    "AFC Challenge Cup":                     3,
+    "Friendly":                              1,
+}
+
+def _get_tier(tournament: str) -> int:
+    return TOURNAMENT_TIERS.get(tournament, 2)  # default: regional competitive
+
+
 FEATURE_COLS = [
     "home_win_rate", "home_draw_rate", "home_loss_rate",
     "home_avg_scored", "home_avg_conceded", "home_recent_form",
     "away_win_rate", "away_draw_rate", "away_loss_rate",
     "away_avg_scored", "away_avg_conceded", "away_recent_form",
     "h2h_home_win_rate", "h2h_draw_rate", "h2h_away_win_rate",
-    "h2h_total_games", "is_neutral",
+    "h2h_total_games", "is_neutral", "tournament_tier",
 ]
 
 
@@ -81,6 +107,7 @@ def build_features(df: pd.DataFrame):
             "h2h_away_win_rate":  h2h_aw,
             "h2h_total_games":    h2h_total,
             "is_neutral":         int(row["neutral"]),
+            "tournament_tier":    _get_tier(row["tournament"]),
         })
 
         # Label from home team perspective
@@ -140,6 +167,7 @@ def serialize_stats(team_stats: dict, h2h: dict) -> tuple[dict, dict]:
 def build_feature_vector(
     home_team: str, away_team: str, is_neutral: bool,
     team_stats: dict, h2h: dict,
+    tournament_tier: int = 5,
 ) -> dict:
     """Build one feature dict for inference (uses saved end-of-history stats)."""
     ht = team_stats.get(home_team, {})
@@ -180,4 +208,5 @@ def build_feature_vector(
         "h2h_away_win_rate":  h2h_aw,
         "h2h_total_games":    h2h_total,
         "is_neutral":         int(is_neutral),
+        "tournament_tier":    tournament_tier,
     }

@@ -1,41 +1,83 @@
 import joblib
+import numpy as np
 import pandas as pd
 from pathlib import Path
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import StratifiedKFold, cross_val_score
+from sklearn.model_selection import StratifiedKFold
+from sklearn.preprocessing import LabelEncoder
+from xgboost import XGBClassifier
 
 ARTIFACTS_DIR = Path("artifacts")
 
 
+class XGBWrapper:
+    """
+    Thin wrapper so XGBClassifier accepts string labels (Win/Draw/Loss)
+    and exposes the same interface as sklearn estimators.
+    """
+
+    def __init__(self, **kwargs):
+        self._kwargs = kwargs
+        self._clf = XGBClassifier(**kwargs)
+        self._le = LabelEncoder()
+
+    def fit(self, X, y):
+        y_enc = self._le.fit_transform(y)
+        self._clf.fit(X, y_enc)
+        self.classes_ = self._le.classes_
+        return self
+
+    def predict(self, X):
+        return self._le.inverse_transform(self._clf.predict(X))
+
+    def predict_proba(self, X):
+        return self._clf.predict_proba(X)
+
+    def score(self, X, y):
+        return float((self.predict(X) == np.asarray(y)).mean())
+
+    @property
+    def feature_importances_(self):
+        return self._clf.feature_importances_
+
+
+def _make_model() -> XGBWrapper:
+    return XGBWrapper(
+        n_estimators=500,
+        max_depth=6,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        eval_metric="mlogloss",
+        random_state=42,
+        n_jobs=-1,
+    )
+
+
 def train(X: pd.DataFrame, y: pd.Series, warmup_frac: float = 0.05):
     """
-    Train a RandomForest on the feature matrix.
-    Skips the first `warmup_frac` of rows where teams have little history,
-    which would otherwise pollute the model with near-zero stats.
+    Train XGBoost on the feature matrix.
+    Skips the first `warmup_frac` rows where teams have little history.
     """
     warmup = int(len(X) * warmup_frac)
     X_fit = X.iloc[warmup:].copy()
     y_fit = y.iloc[warmup:].copy()
 
-    model = RandomForestClassifier(
-        n_estimators=300,
-        max_depth=12,
-        min_samples_leaf=5,
-        class_weight="balanced",
-        random_state=42,
-        n_jobs=-1,
-    )
+    model = _make_model()
     model.fit(X_fit, y_fit)
     return model, X_fit, y_fit
 
 
 def evaluate(model, X: pd.DataFrame, y: pd.Series, cv: int = 5) -> dict:
     skf = StratifiedKFold(n_splits=cv, shuffle=True, random_state=42)
-    scores = cross_val_score(model, X, y, cv=skf, scoring="accuracy", n_jobs=-1)
+    scores = []
+    for train_idx, val_idx in skf.split(X, y):
+        m = _make_model()
+        m.fit(X.iloc[train_idx], y.iloc[train_idx])
+        scores.append(m.score(X.iloc[val_idx], y.iloc[val_idx]))
     return {
-        "cv_accuracy_mean": float(scores.mean()),
-        "cv_accuracy_std":  float(scores.std()),
-        "cv_scores":        scores.tolist(),
+        "cv_accuracy_mean": float(np.mean(scores)),
+        "cv_accuracy_std":  float(np.std(scores)),
+        "cv_scores":        scores,
     }
 
 

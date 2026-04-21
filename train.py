@@ -71,14 +71,19 @@ def main(data_path: str = "data/results.csv") -> None:
 
     print("Building rolling features (no data leakage) ...")
     X, y, team_stats, h2h = build_features(df)
-    dist = y.value_counts().to_dict()
-    print(f"  {len(X):,} rows  |  {dist}")
+    print(f"  {len(X):,} total rows  |  {y.value_counts().to_dict()}")
 
-    print("Training RandomForest ...")
-    model, X_fit, y_fit = train(X, y)
+    # Drop friendlies (tier 1) from training — kept for rolling stats only
+    competitive = X["tournament_tier"] >= 2
+    X_comp, y_comp = X[competitive], y[competitive]
+    print(f"  {competitive.sum():,} competitive rows used for training "
+          f"({(~competitive).sum():,} friendlies excluded)")
+
+    print("Training XGBoost ...")
+    model, X_fit, y_fit = train(X_comp, y_comp, warmup_frac=0.0)
 
     print("Running 5-fold cross-validation ...")
-    metrics = evaluate(model, X_fit, y_fit)
+    metrics = evaluate(model, X_fit, y_fit, cv=5)
     print(f"  CV accuracy: {metrics['cv_accuracy_mean']:.3f} ± {metrics['cv_accuracy_std']:.3f}")
 
     print("\nTop feature importances:")
