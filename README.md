@@ -1,6 +1,6 @@
 # World Cup Match Predictor
 
-A machine learning app that predicts the outcome of any international football match and simulates the 2026 FIFA World Cup bracket using historical data from 1872 to the present.
+A machine learning app that predicts the outcome of any **men's international football** match and simulates the **2026 FIFA Men's World Cup** bracket using historical data from 1872 to the present. Women's football is not currently supported.
 
 ---
 
