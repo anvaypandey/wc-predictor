@@ -1,0 +1,18 @@
+{
+  "tournament": "2026 FIFA World Cup",
+  "hosts": ["United States", "Canada", "Mexico"],
+  "groups": {
+    "A": ["Mexico", "Czech Republic", "South Korea", "South Africa"],
+    "B": ["Canada", "Bosnia and Herzegovina", "Switzerland", "Qatar"],
+    "C": ["Brazil", "Scotland", "Haiti", "Morocco"],
+    "D": ["Paraguay", "Turkey", "Australia", "United States"],
+    "E": ["Ecuador", "Germany", "Ivory Coast", "Curaçao"],
+    "F": ["Netherlands", "Sweden", "Japan", "Tunisia"],
+    "G": ["Belgium", "Iran", "Egypt", "New Zealand"],
+    "H": ["Spain", "Uruguay", "Saudi Arabia", "Cape Verde"],
+    "I": ["France", "Norway", "Iraq", "Senegal"],
+    "J": ["Argentina", "Austria", "Algeria", "Jordan"],
+    "K": ["Portugal", "Colombia", "Uzbekistan", "DR Congo"],
+    "L": ["England", "Croatia", "Panama", "Ghana"]
+  }
+}

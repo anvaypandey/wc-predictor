@@ -1,6 +1,17 @@
 import pandas as pd
 from collections import defaultdict, deque
 
+# Names in rankings dataset that differ from results dataset
+RANKINGS_NAME_MAP = {
+    "IR Iran":            "Iran",
+    "Korea Republic":     "South Korea",
+    "USA":                "United States",
+    "Côte d'Ivoire":      "Ivory Coast",
+    "Türkiye":            "Turkey",
+    "Congo DR":           "DR Congo",
+    "Bosnia-Herzegovina": "Bosnia and Herzegovina",
+}
+
 # Tournament importance tier — used as a feature and to filter training data.
 # Friendlies (tier 1) are kept for rolling stats but excluded from training.
 TOURNAMENT_TIERS: dict[str, int] = {
@@ -34,7 +45,48 @@ FEATURE_COLS = [
     "away_avg_scored", "away_avg_conceded", "away_recent_form",
     "h2h_home_win_rate", "h2h_draw_rate", "h2h_away_win_rate",
     "h2h_total_games", "is_neutral", "tournament_tier",
+    "home_rank", "away_rank", "rank_diff",
 ]
+
+
+def load_rankings(path: str) -> pd.DataFrame:
+    """
+    Load FIFA rankings CSV (tadhgfitzgerald dataset).
+    Returns a DataFrame sorted by rank_date with normalised country names.
+    """
+    rk = pd.read_csv(path, parse_dates=["rank_date"])
+    rk["country_full"] = rk["country_full"].replace(RANKINGS_NAME_MAP)
+    rk = rk.sort_values("rank_date")
+    return rk[["rank_date", "country_full", "rank", "total_points"]]
+
+
+def _lookup_rank(team: str, date, rank_index: dict) -> tuple[int, float]:
+    """
+    Find the most recent ranking for `team` on or before `date`.
+    rank_index: {team: sorted list of (date, rank, points)}
+    Returns (rank, points) or (200, 0.0) if no data.
+    """
+    entries = rank_index.get(team)
+    if not entries:
+        return 200, 0.0
+    lo, hi = 0, len(entries) - 1
+    result = None
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if entries[mid][0] <= date:
+            result = entries[mid]
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return (result[1], result[2]) if result else (200, 0.0)
+
+
+def build_rank_index(rankings_df: pd.DataFrame) -> dict:
+    """Pre-build lookup structure: {team: [(date, rank, points), ...]}"""
+    index: dict = {}
+    for team, grp in rankings_df.groupby("country_full"):
+        index[team] = list(zip(grp["rank_date"], grp["rank"].astype(int), grp["total_points"].astype(float)))
+    return index
 
 
 def load_data(path: str = "data/results.csv") -> pd.DataFrame:
@@ -58,10 +110,11 @@ def _new_h2h():
     return {"a_wins": 0, "draws": 0, "b_wins": 0}
 
 
-def build_features(df: pd.DataFrame):
+def build_features(df: pd.DataFrame, rank_index: dict | None = None):
     """
     Build rolling feature matrix with no data leakage.
     Features for each match are computed from all *prior* matches only.
+    rank_index: optional pre-built ranking lookup (from build_rank_index).
     Returns (X, y, team_stats, h2h).
     """
     team_stats: dict = defaultdict(_new_team)
@@ -89,6 +142,14 @@ def build_features(df: pd.DataFrame):
             h2h_hw = rec["b_wins"] / max(h2h_total, 1)
             h2h_aw = rec["a_wins"] / max(h2h_total, 1)
 
+        # FIFA rankings at match date (0 = no data available)
+        match_date = row["date"]
+        if rank_index:
+            h_rank, _ = _lookup_rank(h, match_date, rank_index)
+            a_rank, _ = _lookup_rank(a, match_date, rank_index)
+        else:
+            h_rank, a_rank = 0, 0
+
         feature_rows.append({
             "home_win_rate":      ht["wins"]          / hg,
             "home_draw_rate":     ht["draws"]         / hg,
@@ -108,6 +169,9 @@ def build_features(df: pd.DataFrame):
             "h2h_total_games":    h2h_total,
             "is_neutral":         int(row["neutral"]),
             "tournament_tier":    _get_tier(row["tournament"]),
+            "home_rank":          h_rank,
+            "away_rank":          a_rank,
+            "rank_diff":          a_rank - h_rank,  # positive = home is better ranked
         })
 
         # Label from home team perspective
@@ -168,6 +232,7 @@ def build_feature_vector(
     home_team: str, away_team: str, is_neutral: bool,
     team_stats: dict, h2h: dict,
     tournament_tier: int = 5,
+    home_rank: int = 0, away_rank: int = 0,
 ) -> dict:
     """Build one feature dict for inference (uses saved end-of-history stats)."""
     ht = team_stats.get(home_team, {})
@@ -209,4 +274,7 @@ def build_feature_vector(
         "h2h_total_games":    h2h_total,
         "is_neutral":         int(is_neutral),
         "tournament_tier":    tournament_tier,
+        "home_rank":          home_rank,
+        "away_rank":          away_rank,
+        "rank_diff":          away_rank - home_rank,
     }
