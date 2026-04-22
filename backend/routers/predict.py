@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 
 from backend.schemas import PredictRequest, PredictResponse, TeamStats, H2HRecord, TeamsResponse
 from backend.state import get_state
+from backend.routers._charts import _DARK_LAYOUT
 from src.prepare import build_feature_vector, FEATURE_COLS
 from src.flags import with_flag
 
@@ -59,16 +60,14 @@ def _prob_chart(home: str, away: str, win_p: float, draw_p: float, loss_p: float
         xaxis=dict(range=[0, 105], title="Probability (%)", showgrid=False),
         yaxis=dict(autorange="reversed"),
         height=200, margin=dict(l=0, r=50, t=10, b=30),
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#e0e0e0"),
+        **_DARK_LAYOUT,
     )
     return fig.to_json()
 
 
-def _shap_chart(model, X: pd.DataFrame, predicted_class: str) -> str:
-    explainer = shap.TreeExplainer(model._clf)
+def _shap_chart(explainer, classes, X: pd.DataFrame, predicted_class: str) -> str:
     shv = explainer(X)
-    class_idx = list(model.classes_).index(predicted_class)
+    class_idx = list(classes).index(predicted_class)
     contributions = shv.values[0, :, class_idx]
     names = [_FEATURE_LABELS.get(f, f) for f in FEATURE_COLS]
     pairs = sorted(zip(contributions, names), key=lambda x: abs(x[0]))
@@ -84,8 +83,7 @@ def _shap_chart(model, X: pd.DataFrame, predicted_class: str) -> str:
     fig.update_layout(
         xaxis_title=f"SHAP contribution toward '{predicted_class}'",
         height=460, margin=dict(l=10, r=70, t=10, b=10),
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#e0e0e0"),
+        **_DARK_LAYOUT,
     )
     return fig.to_json()
 
@@ -136,5 +134,5 @@ def predict(req: PredictRequest):
         away_stats=_team_stats(req.away, s.team_stats, s.rankings),
         h2h=h2h,
         prob_chart=_prob_chart(req.home, req.away, win_p, draw_p, loss_p),
-        shap_chart=_shap_chart(s.model, X, predicted),
+        shap_chart=_shap_chart(s.explainer, s.model.classes_, X, predicted),
     )

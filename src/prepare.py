@@ -123,6 +123,17 @@ def _new_h2h():
     return {"a_wins": 0, "draws": 0, "b_wins": 0}
 
 
+def _form_pct(seq) -> float:
+    return sum(seq) / (len(seq) * 3) if seq else 0.0
+
+
+def _h2h_rates(rec: dict, h_is_first: bool, total: int) -> tuple[float, float]:
+    denom = max(total, 1)
+    if h_is_first:
+        return rec["a_wins"] / denom, rec["b_wins"] / denom
+    return rec["b_wins"] / denom, rec["a_wins"] / denom
+
+
 def build_features(df: pd.DataFrame, rank_index: dict | None = None):
     """
     Build rolling feature matrix with no data leakage.
@@ -150,13 +161,7 @@ def build_features(df: pd.DataFrame, rank_index: dict | None = None):
         rec = h2h[key]
         h_is_first = key[0] == h
         h2h_total = rec["a_wins"] + rec["draws"] + rec["b_wins"]
-
-        if h_is_first:
-            h2h_hw = rec["a_wins"] / max(h2h_total, 1)
-            h2h_aw = rec["b_wins"] / max(h2h_total, 1)
-        else:
-            h2h_hw = rec["b_wins"] / max(h2h_total, 1)
-            h2h_aw = rec["a_wins"] / max(h2h_total, 1)
+        h2h_hw, h2h_aw = _h2h_rates(rec, h_is_first, h2h_total)
 
         # FIFA rankings at match date
         match_date = row.date
@@ -170,42 +175,38 @@ def build_features(df: pd.DataFrame, rank_index: dict | None = None):
         elo_h, elo_a = elos[h], elos[a]
         elo_diff = elo_h - elo_a
 
+        tier = _get_tier(row.tournament)
+
         feature_rows.append({
             "home_win_rate":       ht["wins"]           / hg,
             "home_draw_rate":      ht["draws"]          / hg,
             "home_loss_rate":      ht["losses"]         / hg,
             "home_avg_scored":     ht["goals_scored"]   / hg,
             "home_avg_conceded":   ht["goals_conceded"] / hg,
-            "home_recent_form":    sum(ht["recent"]) / (len(ht["recent"]) * 3) if ht["recent"] else 0,
+            "home_recent_form":    _form_pct(ht["recent"]),
             "away_win_rate":       at["wins"]           / ag,
             "away_draw_rate":      at["draws"]          / ag,
             "away_loss_rate":      at["losses"]         / ag,
             "away_avg_scored":     at["goals_scored"]   / ag,
             "away_avg_conceded":   at["goals_conceded"] / ag,
-            "away_recent_form":    sum(at["recent"]) / (len(at["recent"]) * 3) if at["recent"] else 0,
-            # Competitive-only win/draw rates — more WC-relevant
+            "away_recent_form":    _form_pct(at["recent"]),
             "home_comp_win_rate":  ht["comp_wins"]      / hcg,
             "home_comp_draw_rate": ht["comp_draws"]     / hcg,
             "away_comp_win_rate":  at["comp_wins"]      / acg,
             "away_comp_draw_rate": at["comp_draws"]     / acg,
-            # Short-window and goal-difference form
-            "home_recent_form_5":  sum(ht["recent_5"]) / (len(ht["recent_5"]) * 3) if ht["recent_5"] else 0,
+            "home_recent_form_5":  _form_pct(ht["recent_5"]),
             "home_recent_gd":      sum(ht["recent_gd"]) / max(len(ht["recent_gd"]), 1) if ht["recent_gd"] else 0,
-            "away_recent_form_5":  sum(at["recent_5"]) / (len(at["recent_5"]) * 3) if at["recent_5"] else 0,
+            "away_recent_form_5":  _form_pct(at["recent_5"]),
             "away_recent_gd":      sum(at["recent_gd"]) / max(len(at["recent_gd"]), 1) if at["recent_gd"] else 0,
-            # H2H
             "h2h_home_win_rate":   h2h_hw,
             "h2h_draw_rate":       rec["draws"] / max(h2h_total, 1),
             "h2h_away_win_rate":   h2h_aw,
             "h2h_total_games":     h2h_total,
-            # Context
             "is_neutral":          int(row.neutral),
-            "tournament_tier":     _get_tier(row.tournament),
-            # Rankings
+            "tournament_tier":     tier,
             "home_rank":           h_rank,
             "away_rank":           a_rank,
             "rank_diff":           a_rank - h_rank,
-            # ELO — elo_diff captures strength advantage; abs_elo_diff captures how even the match is
             "home_elo":            elo_h,
             "away_elo":            elo_a,
             "elo_diff":            elo_diff,
@@ -237,7 +238,6 @@ def build_features(df: pd.DataFrame, rank_index: dict | None = None):
         ht["recent_5"].append(h_pts);  at["recent_5"].append(a_pts)
         ht["recent_gd"].append(gd_h);  at["recent_gd"].append(-gd_h)
 
-        tier = _get_tier(row.tournament)
         if tier >= _COMPETITIVE_TIER:
             ht["comp_games"] += 1; at["comp_games"] += 1
             if result == "Win":
@@ -299,18 +299,12 @@ def build_feature_vector(
     rec = h2h.get(key, {"a_wins": 0, "draws": 0, "b_wins": 0})
     h_is_first = key[0] == home_team
     h2h_total = rec["a_wins"] + rec["draws"] + rec["b_wins"]
+    h2h_hw, h2h_aw = _h2h_rates(rec, h_is_first, h2h_total)
 
-    if h_is_first:
-        h2h_hw = rec["a_wins"] / max(h2h_total, 1)
-        h2h_aw = rec["b_wins"] / max(h2h_total, 1)
-    else:
-        h2h_hw = rec["b_wins"] / max(h2h_total, 1)
-        h2h_aw = rec["a_wins"] / max(h2h_total, 1)
-
-    rh   = ht.get("recent",    [])
-    ra   = at.get("recent",    [])
-    rh5  = ht.get("recent_5",  [])
-    ra5  = at.get("recent_5",  [])
+    rh    = ht.get("recent",    [])
+    ra    = at.get("recent",    [])
+    rh5   = ht.get("recent_5",  [])
+    ra5   = at.get("recent_5",  [])
     rh_gd = ht.get("recent_gd", [])
     ra_gd = at.get("recent_gd", [])
 
@@ -324,20 +318,20 @@ def build_feature_vector(
         "home_loss_rate":      ht.get("losses",         0) / hg,
         "home_avg_scored":     ht.get("goals_scored",   0) / hg,
         "home_avg_conceded":   ht.get("goals_conceded", 0) / hg,
-        "home_recent_form":    sum(rh) / (len(rh) * 3) if rh else 0,
+        "home_recent_form":    _form_pct(rh),
         "away_win_rate":       at.get("wins",           0) / ag,
         "away_draw_rate":      at.get("draws",          0) / ag,
         "away_loss_rate":      at.get("losses",         0) / ag,
         "away_avg_scored":     at.get("goals_scored",   0) / ag,
         "away_avg_conceded":   at.get("goals_conceded", 0) / ag,
-        "away_recent_form":    sum(ra) / (len(ra) * 3) if ra else 0,
+        "away_recent_form":    _form_pct(ra),
         "home_comp_win_rate":  ht.get("comp_wins",      0) / hcg,
         "home_comp_draw_rate": ht.get("comp_draws",     0) / hcg,
         "away_comp_win_rate":  at.get("comp_wins",      0) / acg,
         "away_comp_draw_rate": at.get("comp_draws",     0) / acg,
-        "home_recent_form_5":  sum(rh5) / (len(rh5) * 3) if rh5 else 0,
+        "home_recent_form_5":  _form_pct(rh5),
         "home_recent_gd":      sum(rh_gd) / max(len(rh_gd), 1) if rh_gd else 0,
-        "away_recent_form_5":  sum(ra5) / (len(ra5) * 3) if ra5 else 0,
+        "away_recent_form_5":  _form_pct(ra5),
         "away_recent_gd":      sum(ra_gd) / max(len(ra_gd), 1) if ra_gd else 0,
         "h2h_home_win_rate":   h2h_hw,
         "h2h_draw_rate":       rec["draws"] / max(h2h_total, 1),

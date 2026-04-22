@@ -68,11 +68,20 @@ export interface SimProgress {
   label: string;
 }
 
+export interface TeamGroupStats {
+  avg_pts: number;
+  advance_pct: number;
+  "1st_pct": number;
+  "2nd_pct": number;
+  "3rd_pct": number;
+  "4th_pct": number;
+}
+
 export interface SimResult {
   type: "result";
   data: {
-    group_results: Record<string, Record<string, number>[]>;
-    likely_standings: Record<string, string[]>;
+    group_results: Record<string, TeamGroupStats>;  // keyed by team name
+    likely_standings: Record<string, string[]>;     // keyed by group letter
     bracket: string[];
     ko_results: Record<string, Record<string, number>>;
     bracket_chart: string;
@@ -82,7 +91,11 @@ export interface SimResult {
 
 export async function fetchTeams(): Promise<TeamsResponse> {
   const res = await fetch("/api/teams");
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    let msg = res.statusText;
+    try { msg = (await res.json()).detail ?? msg; } catch { /* not JSON */ }
+    throw new Error(msg);
+  }
   return res.json();
 }
 
@@ -96,7 +109,11 @@ export async function fetchPrediction(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ home, away, neutral }),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    let msg = res.statusText;
+    try { msg = (await res.json()).detail ?? msg; } catch { /* not JSON */ }
+    throw new Error(msg);
+  }
   return res.json();
 }
 
@@ -118,6 +135,10 @@ export function streamSimulation(
 
 export async function fetchAccuracy(): Promise<AccuracyResponse> {
   const res = await fetch("/api/accuracy");
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) {
+    let msg = res.statusText;
+    try { msg = (await res.json()).detail ?? msg; } catch { /* not JSON */ }
+    throw new Error(msg);
+  }
   return res.json();
 }

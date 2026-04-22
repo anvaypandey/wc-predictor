@@ -10,6 +10,7 @@ from sklearn.metrics import confusion_matrix
 
 from backend.schemas import AccuracyResponse, WCMatch
 from backend.state import get_state
+from backend.routers._charts import _DARK_LAYOUT
 from src.prepare import FEATURE_COLS
 
 router = APIRouter()
@@ -28,8 +29,7 @@ def _feature_chart(model) -> str:
     fig.update_layout(
         xaxis_title="Importance", height=520,
         margin=dict(l=10, r=60, t=10, b=10),
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#e0e0e0"),
+        **_DARK_LAYOUT,
     )
     return fig.to_json()
 
@@ -47,8 +47,7 @@ def _confusion_chart(df: pd.DataFrame, classes: list[str]) -> str:
     fig.update_layout(
         xaxis_title="Predicted", yaxis_title="Actual",
         height=300, margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#e0e0e0"),
+        **_DARK_LAYOUT,
     )
     return fig.to_json()
 
@@ -66,8 +65,7 @@ def _wc_year_chart(wc_df: pd.DataFrame) -> str:
         xaxis_title="World Cup year",
         yaxis=dict(title="Accuracy (%)", range=[0, 100]),
         height=280, margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#e0e0e0"),
+        **_DARK_LAYOUT,
     )
     return fig.to_json()
 
@@ -102,8 +100,7 @@ def _calibration_chart(df: pd.DataFrame, classes: list[str]) -> str:
         yaxis=dict(title="Actual frequency", range=[0, 1]),
         height=320, legend=dict(orientation="h", y=-0.2),
         margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#e0e0e0"),
+        **_DARK_LAYOUT,
     )
     return fig.to_json()
 
@@ -123,8 +120,7 @@ def _tournament_chart(df: pd.DataFrame) -> str:
         xaxis=dict(title="Accuracy (%)", range=[0, 100]),
         height=max(300, len(acc) * 22),
         margin=dict(l=10, r=120, t=10, b=10),
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#e0e0e0"),
+        **_DARK_LAYOUT,
     )
     return fig.to_json()
 
@@ -134,7 +130,7 @@ def accuracy():
     metrics_path = ARTIFACTS / "metrics.json"
     backtest_path = ARTIFACTS / "backtest.pkl"
     if not metrics_path.exists() or not backtest_path.exists():
-        raise HTTPException(status_code=503, detail="Run python train.py first to generate accuracy data")
+        raise HTTPException(status_code=412, detail="Run python train.py first to generate accuracy data")
 
     metrics = json.loads(metrics_path.read_text())
     df = joblib.load(backtest_path)

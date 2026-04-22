@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from sse_starlette.sse import EventSourceResponse
 
 from backend.state import get_state
+from backend.routers._charts import _DARK_LAYOUT
 from src.bracket import (
     simulate_groups,
     most_likely_group_standings,
@@ -89,7 +90,7 @@ def _bracket_figure(ko_results: dict, bracket: list[str]) -> str:
         xaxis=dict(range=[-5.5, 14], showgrid=False, zeroline=False, showticklabels=False),
         yaxis=dict(range=[-8, 18],   showgrid=False, zeroline=False, showticklabels=False),
         height=600, margin=dict(l=10, r=10, t=30, b=10),
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
+        **_DARK_LAYOUT,
     )
     return fig.to_json()
 
@@ -112,8 +113,7 @@ def _win_chart(bracket: list[str], ko_results: dict) -> str:
         xaxis=dict(title="Win probability (%)", range=[0, max_pct * 1.25]),
         yaxis=dict(autorange="reversed"),
         height=420, margin=dict(l=0, r=60, t=10, b=30),
-        plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(color="#e0e0e0"),
+        **_DARK_LAYOUT,
     )
     return fig.to_json()
 

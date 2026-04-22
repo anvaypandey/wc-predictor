@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import PlotlyChart from "../components/PlotlyChart";
 import { fetchTeams, streamSimulation } from "../api/client";
-import type { SimResult, TeamsResponse } from "../api/client";
+import type { SimResult, TeamsResponse, TeamGroupStats } from "../api/client";
 
 type Stage = "idle" | "groups" | "knockout" | "done" | "error";
 
@@ -121,14 +121,13 @@ export default function BracketSimulator() {
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
               {groupNames.map((g) => {
                 const standings = result.likely_standings[g] ?? [];
-                const probs = result.group_results[g] ?? [];
                 return (
                   <div key={g} className="bg-[#1a1d27] border border-[#2e303a] rounded-xl p-4">
                     <h3 className="text-[#f39c12] font-semibold text-sm mb-2">Group {g}</h3>
                     <ol className="space-y-1">
                       {standings.map((team, i) => {
-                        const teamProbs = probs.find((p: Record<string, number>) => team in p);
-                        const advPct = teamProbs ? (teamProbs[team] * 100).toFixed(0) : null;
+                        const stats: TeamGroupStats | undefined = result.group_results[team];
+                        const advPct = stats ? stats.advance_pct.toFixed(0) : null;
                         return (
                           <li key={team} className="flex items-center gap-2 text-sm">
                             <span className={`w-5 text-center font-bold ${i < 2 ? "text-[#f39c12]" : "text-[#666]"}`}>{i + 1}</span>

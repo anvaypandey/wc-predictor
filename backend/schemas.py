@@ -1,9 +1,9 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class PredictRequest(BaseModel):
-    home:    str
-    away:    str
+    home:    str  = Field(..., min_length=1)
+    away:    str  = Field(..., min_length=1)
     neutral: bool = True
 
 
@@ -40,8 +40,8 @@ class PredictResponse(BaseModel):
 
 class TeamsResponse(BaseModel):
     teams:    list[str]
-    rankings: dict
-    groups:   dict
+    rankings: dict[str, dict]
+    groups:   dict[str, list[str]]
 
 
 class WCMatch(BaseModel):
