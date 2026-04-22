@@ -8,7 +8,7 @@ The training datasets are downloaded automatically via **kagglehub** when you ru
 |------|--------|---------|
 | `results.csv` | Kaggle (auto-downloaded) | Match results 1872–present, used for rolling stats and ELO |
 | `fifa_ranking.csv` | Kaggle (auto-downloaded) | Historical FIFA rankings 1993–2018, used as training features |
-| `fifa_rankings.json` | ESPN API (auto-fetched, 24h TTL) | Live rankings for inference, cached locally |
+| `fifa_rankings.json` | Official FIFA API (auto-fetched, 24h TTL) | Live rankings for inference, cached locally |
 | `wc2026_groups.json` | Committed | 2026 WC group draw — 48 teams across 12 groups |
 
 ## Kaggle credentials
@@ -71,7 +71,7 @@ Used to look up each team's ranking at the time of each training match. Several 
 
 ### `fifa_rankings.json` — Live rankings cache
 
-Fetched from the ESPN unofficial API at inference time, cached for 24 hours. Format:
+Fetched from the official FIFA API (`api.fifa.com/api/v3/rankings`) at inference time, cached for 24 hours. Format:
 
 ```json
 {
@@ -80,7 +80,7 @@ Fetched from the ESPN unofficial API at inference time, cached for 24 hours. For
 }
 ```
 
-Refreshed automatically on first page load after the cache expires. If the fetch fails the previous cached file is used as fallback.
+Refreshed automatically on first page load after the cache expires. If the fetch fails the previous cached file is used as fallback. Source: [FIFA World Ranking (Men)](https://inside.fifa.com/fifa-world-ranking/men).
 
 ### `wc2026_groups.json` — 2026 World Cup groups
 

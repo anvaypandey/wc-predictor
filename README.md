@@ -23,7 +23,7 @@ A machine learning app that predicts the outcome of any international football m
 | Explanations | SHAP |
 | UI | Streamlit, Plotly |
 | Persistence | joblib |
-| Live rankings | ESPN unofficial API (cached 24h) |
+| Live rankings | Official FIFA API — api.fifa.com (cached 24h) |
 
 ---
 
