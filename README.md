@@ -4,7 +4,7 @@ A machine learning app that predicts the outcome of any **men's international fo
 
 ---
 
-## App Pages
+## Pages
 
 | Page | Description |
 |------|-------------|
@@ -21,7 +21,8 @@ A machine learning app that predicts the outcome of any **men's international fo
 | Data | Pandas, kagglehub |
 | Model | XGBoost, LightGBM, scikit-learn |
 | Explanations | SHAP |
-| UI | Streamlit, Plotly |
+| Backend | FastAPI, uvicorn, sse-starlette |
+| Frontend | React, Vite, TypeScript, Tailwind CSS, Plotly |
 | Persistence | joblib |
 | Live rankings | Official FIFA API — api.fifa.com (cached 24h) |
 
@@ -31,45 +32,62 @@ A machine learning app that predicts the outcome of any **men's international fo
 
 ```
 WC Predictor/
-├── app.py                    # Streamlit navigation entry point
-├── train.py                  # Training pipeline (run once)
-├── requirements.txt
-├── .env                      # Kaggle credentials (not committed)
+├── backend/
+│   ├── main.py               # FastAPI app + CORS + static file serving
+│   ├── state.py              # Artifact loading (model, stats, ELO, rankings)
+│   ├── schemas.py            # Pydantic request/response models
+│   └── routers/
+│       ├── predict.py        # GET /api/teams  |  POST /api/predict
+│       ├── simulate.py       # GET /api/simulate/stream  (SSE)
+│       └── accuracy.py       # GET /api/accuracy
+├── frontend/
+│   ├── vite.config.ts        # Vite + Tailwind plugin + /api proxy
+│   └── src/
+│       ├── App.tsx           # React Router with 3 routes
+│       ├── api/client.ts     # fetch + EventSource helpers + TypeScript types
+│       ├── components/       # Navbar, PlotlyChart, StatCard
+│       └── pages/            # MatchPredictor, BracketSimulator, ModelAccuracy
 ├── src/
 │   ├── prepare.py            # Feature engineering + ELO ratings
 │   ├── model.py              # XGBoost/LightGBM wrappers, CV, training
 │   ├── bracket.py            # Monte Carlo group + knockout simulator
-│   ├── scraper.py            # Live FIFA rankings via ESPN
+│   ├── scraper.py            # Live FIFA rankings via official API
 │   └── flags.py              # Country flag emoji map
-├── pages/
-│   ├── 1_Match_Predictor.py
-│   ├── 2_Bracket_Simulator.py
-│   └── 3_Accuracy.py
 ├── data/
 │   ├── results.csv           # Match results (auto-downloaded)
 │   ├── fifa_ranking.csv      # Historical rankings (auto-downloaded)
 │   ├── wc2026_groups.json    # 2026 WC group draw
 │   └── README.md
-└── artifacts/                # Generated after training
-    ├── model.pkl
-    ├── team_stats.pkl
-    ├── h2h.pkl
-    ├── elo_ratings.pkl
-    ├── backtest.pkl
-    └── metrics.json
+├── tests/
+│   ├── test_prepare.py       # 33 unit tests for feature engineering
+│   └── test_bracket.py       # 19 unit tests for bracket simulation
+├── train.py                  # Training pipeline (run once)
+├── requirements.txt
+├── render.yaml               # Render deployment config
+└── .github/workflows/
+    ├── retrain.yml           # Monthly model retraining
+    └── deploy.yml            # Push-to-main → Render deploy hook
 ```
+
+Artifacts (`artifacts/`) are generated at training time and excluded from the repo.
 
 ---
 
 ## Setup
 
-### 1. Install dependencies
+### 1. Install Python dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Add Kaggle credentials
+### 2. Install frontend dependencies
+
+```bash
+cd frontend && npm install
+```
+
+### 3. Add Kaggle credentials
 
 Create a `.env` file in the project root:
 
@@ -80,7 +98,7 @@ KAGGLE_KEY=your_kaggle_api_key
 
 Get your API key from [kaggle.com](https://www.kaggle.com) → Account → API → **Create New Token**.
 
-### 3. Train the model
+### 4. Train the model
 
 ```bash
 python train.py
@@ -91,14 +109,27 @@ This will:
 - Compute rolling ELO ratings across 49,000+ matches
 - Engineer 33 features per match with no data leakage
 - Evaluate XGBoost vs LightGBM via 5-fold CV and select the better one
-- Save model artifacts and a back-test dataset to `artifacts/`
+- Save model artifacts to `artifacts/` (gitignored)
 
 Runtime: ~3–5 minutes.
 
-### 4. Launch the app
+### 5. Run locally
 
 ```bash
-streamlit run app.py
+# Terminal 1 — backend
+uvicorn backend.main:app --reload
+
+# Terminal 2 — frontend dev server (proxies /api → localhost:8000)
+cd frontend && npm run dev
+```
+
+Open [http://localhost:5173](http://localhost:5173).
+
+### 6. Production build
+
+```bash
+cd frontend && npm run build
+uvicorn backend.main:app   # serves React from frontend/dist/
 ```
 
 ---
@@ -154,11 +185,25 @@ The bracket simulator runs N independent simulations (default 500):
 
 ---
 
+## Deployment
+
+The app is deployed on [Render](https://render.com) as a single Python web service. The React frontend is built at deploy time and served as static files from FastAPI.
+
+```yaml
+# render.yaml
+buildCommand: pip install -r requirements.txt && cd frontend && npm install && npm run build
+startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+```
+
+A GitHub Actions workflow triggers a redeploy on every push to `main`, and a separate workflow retrains the model on the first of each month using Kaggle credentials stored as repository secrets.
+
+---
+
 ## Data Sources
 
 - **Match results**: [International football results 1872–present](https://www.kaggle.com/datasets/martj42/international-football-results-from-1872-to-2017) (Kaggle)
-- **Historical FIFA rankings**: [FIFA rankings 1993–2018](https://www.kaggle.com/datasets/tadhgfitzgerald/fifa-international-soccer-mens-ranking-1993now) (Kaggle)
-- **Live FIFA rankings**: ESPN unofficial API (cached locally, refreshed every 24h)
+- **Historical FIFA rankings**: [FIFA rankings 1993–present](https://www.kaggle.com/datasets/tadhgfitzgerald/fifa-international-soccer-mens-ranking-1993now) (Kaggle)
+- **Live FIFA rankings**: Official FIFA API — `api.fifa.com` (cached locally, refreshed every 24h)
 
 ---
 
