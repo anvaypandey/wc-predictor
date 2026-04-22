@@ -12,7 +12,8 @@ st.set_page_config(
 )
 
 pg = st.navigation([
-    st.Page("pages/1_Match_Predictor.py", title="Match Predictor", icon="🎯"),
+    st.Page("pages/1_Match_Predictor.py",  title="Match Predictor",   icon="🎯"),
     st.Page("pages/2_Bracket_Simulator.py", title="Bracket Simulator", icon="🏆"),
+    st.Page("pages/3_Accuracy.py",          title="Model Accuracy",     icon="📊"),
 ])
 pg.run()

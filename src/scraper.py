@@ -93,6 +93,9 @@ def _parse_espn_rankings(data: dict) -> dict[str, dict]:
         except Exception:
             pass
 
+    if not rankings:
+        print("  Warning: could not parse ESPN rankings response — both parse strategies returned empty.")
+
     return rankings
 
 

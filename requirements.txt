@@ -7,3 +7,5 @@ plotly>=5.18.0
 kagglehub>=0.2.0
 python-dotenv>=1.0.0
 xgboost>=2.0.0
+shap>=0.43.0
+pytest>=8.0.0

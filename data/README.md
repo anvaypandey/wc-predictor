@@ -1,50 +1,97 @@
-# Data Setup
+# Data
 
-The dataset is downloaded automatically via **kagglehub** when you run `train.py`.
-No manual steps required — kagglehub caches the download so subsequent runs are instant.
+The training datasets are downloaded automatically via **kagglehub** when you run `train.py`. No manual steps required — kagglehub caches downloads so subsequent runs are instant.
 
-## First-time setup
+## Files
 
-You need a Kaggle account and API credentials configured once:
+| File | Source | Purpose |
+|------|--------|---------|
+| `results.csv` | Kaggle (auto-downloaded) | Match results 1872–present, used for rolling stats and ELO |
+| `fifa_ranking.csv` | Kaggle (auto-downloaded) | Historical FIFA rankings 1993–2018, used as training features |
+| `fifa_rankings.json` | ESPN API (auto-fetched, 24h TTL) | Live rankings for inference, cached locally |
+| `wc2026_groups.json` | Committed | 2026 WC group draw — 48 teams across 12 groups |
 
-```bash
-pip install kagglehub
-```
+## Kaggle credentials
 
-Then either:
-- Set environment variables: `KAGGLE_USERNAME` and `KAGGLE_KEY`
-- Or place `~/.kaggle/kaggle.json` with `{"username": "...", "key": "..."}`
-  (download from Kaggle → Account → API → Create New Token)
-
-## Run
+You need a Kaggle account configured once:
 
 ```bash
-pip install -r requirements.txt
-python train.py          # auto-downloads dataset, trains model
-streamlit run app.py
+# Option A — .env file in project root
+KAGGLE_USERNAME=your_username
+KAGGLE_KEY=your_api_key
+
+# Option B — standard Kaggle config
+~/.kaggle/kaggle.json  →  {"username": "...", "key": "..."}
 ```
 
-## Manual override
+Get your key: Kaggle → Account → API → **Create New Token**.
 
-If you already have `results.csv` locally:
+## Manual data override
+
+If you already have the CSVs locally:
 
 ```bash
 python train.py --data path/to/results.csv
 ```
 
-## Dataset
+The rankings CSV is looked up automatically from the Kaggle cache or downloaded fresh if missing.
 
-**International football results from 1872 to 2017 (and beyond)**
-`martj42/international-football-results-from-1872-to-2017` on Kaggle
+---
 
-| Column       | Description                        |
-|--------------|------------------------------------|
-| date         | Match date (YYYY-MM-DD)            |
-| home_team    | Home team name                     |
-| away_team    | Away team name                     |
-| home_score   | Goals scored by home team          |
-| away_score   | Goals scored by away team          |
-| tournament   | Tournament name                    |
-| city         | Host city                          |
-| country      | Host country                       |
-| neutral      | True if played at neutral venue    |
+## Dataset schemas
+
+### `results.csv` — Match results
+
+Kaggle: `martj42/international-football-results-from-1872-to-2017`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `date` | date | Match date |
+| `home_team` | string | Home team name |
+| `away_team` | string | Away team name |
+| `home_score` | int | Goals scored by home team |
+| `away_score` | int | Goals scored by away team |
+| `tournament` | string | Tournament name |
+| `city` | string | Host city |
+| `country` | string | Host country |
+| `neutral` | bool | True if played at a neutral venue |
+
+### `fifa_ranking.csv` — Historical FIFA rankings
+
+Kaggle: `tadhgfitzgerald/fifa-international-soccer-mens-ranking-1993now`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `rank_date` | date | Date of the ranking snapshot |
+| `country_full` | string | Country name (mapped to results dataset names) |
+| `rank` | int | FIFA world ranking position |
+| `total_points` | float | FIFA ranking points |
+
+Used to look up each team's ranking at the time of each training match. Several country names differ between the two datasets and are normalised via `RANKINGS_NAME_MAP` in `src/prepare.py`.
+
+### `fifa_rankings.json` — Live rankings cache
+
+Fetched from the ESPN unofficial API at inference time, cached for 24 hours. Format:
+
+```json
+{
+  "Brazil":    {"rank": 1, "points": 1896.15},
+  "Argentina": {"rank": 2, "points": 1868.96}
+}
+```
+
+Refreshed automatically on first page load after the cache expires. If the fetch fails the previous cached file is used as fallback.
+
+### `wc2026_groups.json` — 2026 World Cup groups
+
+```json
+{
+  "groups": {
+    "A": ["Mexico", "USA", "Canada", "..."],
+    "B": [...],
+    ...
+  }
+}
+```
+
+48 teams across 12 groups of 4, reflecting the official 2026 FIFA World Cup draw. Used by the Bracket Simulator page.

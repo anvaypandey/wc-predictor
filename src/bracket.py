@@ -16,13 +16,15 @@ from src.prepare import build_feature_vector, FEATURE_COLS
 # ── Match helpers ─────────────────────────────────────────────────────────────
 
 def _match_proba(home: str, away: str, model, team_stats: dict, h2h: dict,
-                 rankings: dict | None = None) -> dict[str, float]:
+                 rankings: dict | None = None,
+                 elo_ratings: dict | None = None) -> dict[str, float]:
     """Returns {Win, Draw, Loss} probabilities from the home team's perspective."""
     hr = rankings.get(home, {}).get("rank", 0) if rankings else 0
     ar = rankings.get(away, {}).get("rank", 0) if rankings else 0
     feat = build_feature_vector(
         home, away, is_neutral=True, team_stats=team_stats, h2h=h2h,
         tournament_tier=5, home_rank=hr, away_rank=ar,
+        elo_ratings=elo_ratings,
     )
     X = pd.DataFrame([feat])[FEATURE_COLS]
     proba = model.predict_proba(X)[0]
@@ -37,9 +39,10 @@ def _sample_outcome(p: dict[str, float]) -> str:
 
 
 def _knockout_winner(t1: str, t2: str, model, team_stats: dict, h2h: dict,
-                     rankings: dict | None) -> str:
+                     rankings: dict | None,
+                     elo_ratings: dict | None = None) -> str:
     """Simulate a knockout match. Draws go to 50/50 penalties."""
-    p = _match_proba(t1, t2, model, team_stats, h2h, rankings)
+    p = _match_proba(t1, t2, model, team_stats, h2h, rankings, elo_ratings)
     win_p = p["Win"] + p["Draw"] * 0.5
     return t1 if random.random() < win_p else t2
 
@@ -47,12 +50,13 @@ def _knockout_winner(t1: str, t2: str, model, team_stats: dict, h2h: dict,
 # ── Group stage ───────────────────────────────────────────────────────────────
 
 def _simulate_group_once(teams: list[str], model, team_stats: dict,
-                          h2h: dict, rankings: dict | None) -> dict[str, dict]:
+                          h2h: dict, rankings: dict | None,
+                          elo_ratings: dict | None = None) -> dict[str, dict]:
     pts = {t: 0 for t in teams}
     gd  = {t: 0 for t in teams}
 
     for home, away in combinations(teams, 2):
-        p = _match_proba(home, away, model, team_stats, h2h, rankings)
+        p = _match_proba(home, away, model, team_stats, h2h, rankings, elo_ratings)
         r = _sample_outcome(p)
         if r == "Win":
             pts[home] += 3; gd[home] += 1; gd[away] -= 1
@@ -72,6 +76,7 @@ def simulate_groups(
     h2h: dict,
     n_sims: int = 500,
     rankings: dict | None = None,
+    elo_ratings: dict | None = None,
 ) -> dict[str, dict]:
     """
     Monte Carlo group stage simulation.
@@ -87,7 +92,9 @@ def simulate_groups(
         third_place = []
 
         for group_teams in groups.values():
-            standings = _simulate_group_once(group_teams, model, team_stats, h2h, rankings)
+            standings = _simulate_group_once(
+                group_teams, model, team_stats, h2h, rankings, elo_ratings
+            )
             order = sorted(
                 group_teams,
                 key=lambda t: (standings[t]["pts"], standings[t]["gd"], random.random()),
@@ -126,6 +133,7 @@ def most_likely_group_standings(
     team_stats: dict,
     h2h: dict,
     rankings: dict | None = None,
+    elo_ratings: dict | None = None,
 ) -> dict[str, list[str]]:
     """
     Run a single deterministic-ish simulation using expected points
@@ -137,8 +145,7 @@ def most_likely_group_standings(
         pts = {t: 0 for t in teams}
         gd  = {t: 0 for t in teams}
         for home, away in combinations(teams, 2):
-            p = _match_proba(home, away, model, team_stats, h2h, rankings)
-            # Use expected points instead of sampling
+            p = _match_proba(home, away, model, team_stats, h2h, rankings, elo_ratings)
             pts[home] += 3 * p["Win"] + 1 * p["Draw"]
             pts[away] += 3 * p["Loss"] + 1 * p["Draw"]
             gd[home]  += p["Win"] - p["Loss"]
@@ -157,6 +164,7 @@ def simulate_knockout(
     h2h: dict,
     n_sims: int = 500,
     rankings: dict | None = None,
+    elo_ratings: dict | None = None,
 ) -> dict[str, dict]:
     """
     Monte Carlo knockout simulation from R32 onwards (32 teams).
@@ -175,7 +183,7 @@ def simulate_knockout(
             for i in range(0, len(bracket), 2):
                 w = _knockout_winner(
                     bracket[i], bracket[i + 1],
-                    model, team_stats, h2h, rankings,
+                    model, team_stats, h2h, rankings, elo_ratings,
                 )
                 round_reach[w][round_name] += 1
                 next_round.append(w)
@@ -191,9 +199,13 @@ def build_r32_bracket(group_standings: dict[str, list[str]],
                       group_sim_results: dict[str, dict]) -> list[str]:
     """
     Construct the 32-team R32 bracket from group standings.
-    Top 2 from each of 12 groups (24 teams) + best 8 of 12 third-place teams.
-    Returns an ordered list of 32 teams paired for the R32
-    (index 0 vs 1, 2 vs 3, …).
+    Top 2 from each of 12 groups (24 teams) + best 8 third-place teams (8 teams).
+    Returns an ordered list of 32 teams paired for R32 (index 0 vs 1, 2 vs 3, …).
+
+    Pairings (16 matches):
+      - 8 matches: firsts[0..7]  vs best_thirds[0..7]
+      - 4 matches: firsts[8..11] vs seconds[8..11]
+      - 4 matches: seconds[0..3] vs seconds[4..7]
     """
     firsts, seconds, thirds = [], [], []
 
@@ -210,35 +222,18 @@ def build_r32_bracket(group_standings: dict[str, list[str]],
     thirds.sort(reverse=True)
     best_thirds = [t for _, _, t in thirds[:8]]
 
-    # Build 16 R32 pairings:
-    # 8 × (1st place vs best-3rd place) + 8 × (2nd place vs 2nd-best-3rd/other-2nd)
     bracket: list[str] = []
     for i in range(8):
         bracket.append(firsts[i])
         bracket.append(best_thirds[i])
     for i in range(8, 12):
         bracket.append(firsts[i])
-        bracket.append(seconds[i - 8])
-    for i in range(8, 12):
         bracket.append(seconds[i])
-        bracket.append(seconds[i - 4] if i - 4 >= 8 else seconds[i + 4 - 8])
+    for i in range(4):
+        bracket.append(seconds[i])
+        bracket.append(seconds[i + 4])
 
-    # Guarantee exactly 32 unique teams
-    seen: set = set()
-    unique: list[str] = []
-    for t in bracket:
-        if t not in seen:
-            seen.add(t)
-            unique.append(t)
-    # Fill any remaining slots with leftover qualified teams
-    all_qualified = firsts + seconds + best_thirds
-    for t in all_qualified:
-        if t not in seen and len(unique) < 32:
-            seen.add(t)
-            unique.append(t)
+    assert len(bracket) == 32, f"Bracket has {len(bracket)} teams, expected 32"
+    assert len(set(bracket)) == 32, f"Bracket has duplicate teams ({len(set(bracket))} unique)"
 
-    # Pad to even length for bracket simulation
-    if len(unique) % 2 != 0:
-        unique = unique[:len(unique) - 1]
-
-    return unique
+    return bracket

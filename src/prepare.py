@@ -12,8 +12,6 @@ RANKINGS_NAME_MAP = {
     "Bosnia-Herzegovina": "Bosnia and Herzegovina",
 }
 
-# Tournament importance tier — used as a feature and to filter training data.
-# Friendlies (tier 1) are kept for rolling stats but excluded from training.
 TOURNAMENT_TIERS: dict[str, int] = {
     "FIFA World Cup":                        5,
     "UEFA Euro":                             4,
@@ -34,26 +32,40 @@ TOURNAMENT_TIERS: dict[str, int] = {
     "Friendly":                              1,
 }
 
+# ELO K factor per tier — WC result moves ratings more than a friendly
+_ELO_K: dict[int, float] = {1: 16.0, 2: 24.0, 3: 30.0, 4: 40.0, 5: 50.0}
+_ELO_INIT = 1500.0
+_COMPETITIVE_TIER = 2   # tier >= this counts as competitive for comp-only stats
+
+
 def _get_tier(tournament: str) -> int:
-    return TOURNAMENT_TIERS.get(tournament, 2)  # default: regional competitive
+    return TOURNAMENT_TIERS.get(tournament, 1)
 
 
 FEATURE_COLS = [
+    # Overall rolling stats
     "home_win_rate", "home_draw_rate", "home_loss_rate",
     "home_avg_scored", "home_avg_conceded", "home_recent_form",
     "away_win_rate", "away_draw_rate", "away_loss_rate",
     "away_avg_scored", "away_avg_conceded", "away_recent_form",
-    "h2h_home_win_rate", "h2h_draw_rate", "h2h_away_win_rate",
-    "h2h_total_games", "is_neutral", "tournament_tier",
+    # Competitive-only stats (more WC-relevant)
+    "home_comp_win_rate", "home_comp_draw_rate",
+    "away_comp_win_rate", "away_comp_draw_rate",
+    # Short-window form + goal-difference momentum
+    "home_recent_form_5", "home_recent_gd",
+    "away_recent_form_5", "away_recent_gd",
+    # Head-to-head
+    "h2h_home_win_rate", "h2h_draw_rate", "h2h_away_win_rate", "h2h_total_games",
+    # Context
+    "is_neutral", "tournament_tier",
+    # FIFA rankings
     "home_rank", "away_rank", "rank_diff",
+    # ELO
+    "home_elo", "away_elo", "elo_diff", "abs_elo_diff",
 ]
 
 
 def load_rankings(path: str) -> pd.DataFrame:
-    """
-    Load FIFA rankings CSV (tadhgfitzgerald dataset).
-    Returns a DataFrame sorted by rank_date with normalised country names.
-    """
     rk = pd.read_csv(path, parse_dates=["rank_date"])
     rk["country_full"] = rk["country_full"].replace(RANKINGS_NAME_MAP)
     rk = rk.sort_values("rank_date")
@@ -61,11 +73,6 @@ def load_rankings(path: str) -> pd.DataFrame:
 
 
 def _lookup_rank(team: str, date, rank_index: dict) -> tuple[int, float]:
-    """
-    Find the most recent ranking for `team` on or before `date`.
-    rank_index: {team: sorted list of (date, rank, points)}
-    Returns (rank, points) or (200, 0.0) if no data.
-    """
     entries = rank_index.get(team)
     if not entries:
         return 200, 0.0
@@ -82,10 +89,11 @@ def _lookup_rank(team: str, date, rank_index: dict) -> tuple[int, float]:
 
 
 def build_rank_index(rankings_df: pd.DataFrame) -> dict:
-    """Pre-build lookup structure: {team: [(date, rank, points), ...]}"""
     index: dict = {}
     for team, grp in rankings_df.groupby("country_full"):
-        index[team] = list(zip(grp["rank_date"], grp["rank"].astype(int), grp["total_points"].astype(float)))
+        index[team] = list(zip(
+            grp["rank_date"], grp["rank"].astype(int), grp["total_points"].astype(float)
+        ))
     return index
 
 
@@ -100,9 +108,14 @@ def load_data(path: str = "data/results.csv") -> pd.DataFrame:
 
 def _new_team():
     return {
+        # Overall stats
         "games": 0, "wins": 0, "draws": 0, "losses": 0,
         "goals_scored": 0, "goals_conceded": 0,
-        "recent": deque(maxlen=10),
+        "recent": deque(maxlen=10),   # points last 10 matches
+        "recent_5": deque(maxlen=5),  # points last 5 matches
+        "recent_gd": deque(maxlen=10),  # goal difference last 10 matches
+        # Competitive-only stats
+        "comp_games": 0, "comp_wins": 0, "comp_draws": 0, "comp_losses": 0,
     }
 
 
@@ -114,22 +127,25 @@ def build_features(df: pd.DataFrame, rank_index: dict | None = None):
     """
     Build rolling feature matrix with no data leakage.
     Features for each match are computed from all *prior* matches only.
-    rank_index: optional pre-built ranking lookup (from build_rank_index).
-    Returns (X, y, team_stats, h2h).
+    Returns (X, y, team_stats, h2h, elo_ratings).
     """
     team_stats: dict = defaultdict(_new_team)
     h2h: dict = defaultdict(_new_h2h)
+    elos: dict = defaultdict(lambda: _ELO_INIT)
 
     feature_rows = []
     labels = []
 
-    for _, row in df.iterrows():
-        h, a = row["home_team"], row["away_team"]
-        hs, as_ = int(row["home_score"]), int(row["away_score"])
+    for row in df.itertuples(index=False):
+        h, a = row.home_team, row.away_team
+        hs, as_ = int(row.home_score), int(row.away_score)
         ht, at = team_stats[h], team_stats[a]
-        hg, ag = max(ht["games"], 1), max(at["games"], 1)
+        hg = max(ht["games"], 1)
+        ag = max(at["games"], 1)
+        hcg = max(ht["comp_games"], 1)
+        acg = max(at["comp_games"], 1)
 
-        # H2H — always keyed in sorted order so (A,B) == (B,A)
+        # H2H (keyed in sorted order)
         key = tuple(sorted([h, a]))
         rec = h2h[key]
         h_is_first = key[0] == h
@@ -142,87 +158,123 @@ def build_features(df: pd.DataFrame, rank_index: dict | None = None):
             h2h_hw = rec["b_wins"] / max(h2h_total, 1)
             h2h_aw = rec["a_wins"] / max(h2h_total, 1)
 
-        # FIFA rankings at match date (0 = no data available)
-        match_date = row["date"]
+        # FIFA rankings at match date
+        match_date = row.date
         if rank_index:
             h_rank, _ = _lookup_rank(h, match_date, rank_index)
             a_rank, _ = _lookup_rank(a, match_date, rank_index)
         else:
             h_rank, a_rank = 0, 0
 
+        # ELO before this match
+        elo_h, elo_a = elos[h], elos[a]
+        elo_diff = elo_h - elo_a
+
         feature_rows.append({
-            "home_win_rate":      ht["wins"]          / hg,
-            "home_draw_rate":     ht["draws"]         / hg,
-            "home_loss_rate":     ht["losses"]        / hg,
-            "home_avg_scored":    ht["goals_scored"]  / hg,
-            "home_avg_conceded":  ht["goals_conceded"]/ hg,
-            "home_recent_form":   sum(ht["recent"]) / 30 if ht["recent"] else 0,
-            "away_win_rate":      at["wins"]          / ag,
-            "away_draw_rate":     at["draws"]         / ag,
-            "away_loss_rate":     at["losses"]        / ag,
-            "away_avg_scored":    at["goals_scored"]  / ag,
-            "away_avg_conceded":  at["goals_conceded"]/ ag,
-            "away_recent_form":   sum(at["recent"]) / 30 if at["recent"] else 0,
-            "h2h_home_win_rate":  h2h_hw,
-            "h2h_draw_rate":      rec["draws"] / max(h2h_total, 1),
-            "h2h_away_win_rate":  h2h_aw,
-            "h2h_total_games":    h2h_total,
-            "is_neutral":         int(row["neutral"]),
-            "tournament_tier":    _get_tier(row["tournament"]),
-            "home_rank":          h_rank,
-            "away_rank":          a_rank,
-            "rank_diff":          a_rank - h_rank,  # positive = home is better ranked
+            "home_win_rate":       ht["wins"]           / hg,
+            "home_draw_rate":      ht["draws"]          / hg,
+            "home_loss_rate":      ht["losses"]         / hg,
+            "home_avg_scored":     ht["goals_scored"]   / hg,
+            "home_avg_conceded":   ht["goals_conceded"] / hg,
+            "home_recent_form":    sum(ht["recent"]) / (len(ht["recent"]) * 3) if ht["recent"] else 0,
+            "away_win_rate":       at["wins"]           / ag,
+            "away_draw_rate":      at["draws"]          / ag,
+            "away_loss_rate":      at["losses"]         / ag,
+            "away_avg_scored":     at["goals_scored"]   / ag,
+            "away_avg_conceded":   at["goals_conceded"] / ag,
+            "away_recent_form":    sum(at["recent"]) / (len(at["recent"]) * 3) if at["recent"] else 0,
+            # Competitive-only win/draw rates — more WC-relevant
+            "home_comp_win_rate":  ht["comp_wins"]      / hcg,
+            "home_comp_draw_rate": ht["comp_draws"]     / hcg,
+            "away_comp_win_rate":  at["comp_wins"]      / acg,
+            "away_comp_draw_rate": at["comp_draws"]     / acg,
+            # Short-window and goal-difference form
+            "home_recent_form_5":  sum(ht["recent_5"]) / (len(ht["recent_5"]) * 3) if ht["recent_5"] else 0,
+            "home_recent_gd":      sum(ht["recent_gd"]) / max(len(ht["recent_gd"]), 1) if ht["recent_gd"] else 0,
+            "away_recent_form_5":  sum(at["recent_5"]) / (len(at["recent_5"]) * 3) if at["recent_5"] else 0,
+            "away_recent_gd":      sum(at["recent_gd"]) / max(len(at["recent_gd"]), 1) if at["recent_gd"] else 0,
+            # H2H
+            "h2h_home_win_rate":   h2h_hw,
+            "h2h_draw_rate":       rec["draws"] / max(h2h_total, 1),
+            "h2h_away_win_rate":   h2h_aw,
+            "h2h_total_games":     h2h_total,
+            # Context
+            "is_neutral":          int(row.neutral),
+            "tournament_tier":     _get_tier(row.tournament),
+            # Rankings
+            "home_rank":           h_rank,
+            "away_rank":           a_rank,
+            "rank_diff":           a_rank - h_rank,
+            # ELO — elo_diff captures strength advantage; abs_elo_diff captures how even the match is
+            "home_elo":            elo_h,
+            "away_elo":            elo_a,
+            "elo_diff":            elo_diff,
+            "abs_elo_diff":        abs(elo_diff),
         })
 
         # Label from home team perspective
         if hs > as_:
-            result, h_pts, a_pts = "Win", 3, 0
+            result, h_pts, a_pts = "Win",  3, 0
         elif hs == as_:
             result, h_pts, a_pts = "Draw", 1, 1
         else:
             result, h_pts, a_pts = "Loss", 0, 3
         labels.append(result)
 
-        # Update running stats (after recording features to avoid leakage)
-        ht["games"] += 1
-        ht["goals_scored"] += hs
-        ht["goals_conceded"] += as_
-        at["games"] += 1
-        at["goals_scored"] += as_
-        at["goals_conceded"] += hs
+        # ── Update rolling stats (after features — no leakage) ──
+        gd_h = hs - as_
+        ht["games"] += 1; ht["goals_scored"] += hs; ht["goals_conceded"] += as_
+        at["games"] += 1; at["goals_scored"] += as_; at["goals_conceded"] += hs
 
         if result == "Win":
-            ht["wins"] += 1
-            at["losses"] += 1
+            ht["wins"] += 1; at["losses"] += 1
         elif result == "Draw":
-            ht["draws"] += 1
-            at["draws"] += 1
+            ht["draws"] += 1; at["draws"] += 1
         else:
-            ht["losses"] += 1
-            at["wins"] += 1
+            ht["losses"] += 1; at["wins"] += 1
 
-        ht["recent"].append(h_pts)
-        at["recent"].append(a_pts)
+        ht["recent"].append(h_pts);    at["recent"].append(a_pts)
+        ht["recent_5"].append(h_pts);  at["recent_5"].append(a_pts)
+        ht["recent_gd"].append(gd_h);  at["recent_gd"].append(-gd_h)
+
+        tier = _get_tier(row.tournament)
+        if tier >= _COMPETITIVE_TIER:
+            ht["comp_games"] += 1; at["comp_games"] += 1
+            if result == "Win":
+                ht["comp_wins"] += 1; at["comp_losses"] += 1
+            elif result == "Draw":
+                ht["comp_draws"] += 1; at["comp_draws"] += 1
+            else:
+                at["comp_wins"] += 1; ht["comp_losses"] += 1
 
         # Update H2H
         if h_is_first:
-            if hs > as_:   rec["a_wins"] += 1
-            elif hs == as_: rec["draws"] += 1
+            if hs > as_:    rec["a_wins"] += 1
+            elif hs == as_: rec["draws"]  += 1
             else:           rec["b_wins"] += 1
         else:
-            if hs > as_:   rec["b_wins"] += 1
-            elif hs == as_: rec["draws"] += 1
+            if hs > as_:    rec["b_wins"] += 1
+            elif hs == as_: rec["draws"]  += 1
             else:           rec["a_wins"] += 1
+
+        # Update ELO — margin-adjusted K (dominant wins count more)
+        K = _ELO_K.get(tier, 24.0)
+        gd_factor = min(1.0 + abs(gd_h) * 0.5, 2.5)  # 1-goal win = 1.5x, 3+ goal win = 2.5x
+        K_eff = K * gd_factor
+        exp_h = 1.0 / (1.0 + 10.0 ** ((elo_a - elo_h) / 400.0))
+        s_h = 1.0 if hs > as_ else (0.5 if hs == as_ else 0.0)
+        elos[h] += K_eff * (s_h - exp_h)
+        elos[a] += K_eff * ((1.0 - s_h) - (1.0 - exp_h))
 
     X = pd.DataFrame(feature_rows)[FEATURE_COLS]
     y = pd.Series(labels, name="result")
-    return X, y, team_stats, h2h
+    return X, y, team_stats, h2h, dict(elos)
 
 
 def serialize_stats(team_stats: dict, h2h: dict) -> tuple[dict, dict]:
-    """Convert defaultdicts/deques to plain dicts/lists for joblib serialisation."""
+    deque_fields = {"recent", "recent_5", "recent_gd"}
     ts = {
-        team: {k: (list(v) if k == "recent" else v) for k, v in s.items()}
+        team: {k: (list(v) if k in deque_fields else v) for k, v in s.items()}
         for team, s in team_stats.items()
     }
     return ts, dict(h2h)
@@ -233,12 +285,15 @@ def build_feature_vector(
     team_stats: dict, h2h: dict,
     tournament_tier: int = 5,
     home_rank: int = 0, away_rank: int = 0,
+    elo_ratings: dict | None = None,
 ) -> dict:
     """Build one feature dict for inference (uses saved end-of-history stats)."""
     ht = team_stats.get(home_team, {})
     at = team_stats.get(away_team, {})
-    hg = max(ht.get("games", 0), 1)
-    ag = max(at.get("games", 0), 1)
+    hg  = max(ht.get("games",      0), 1)
+    ag  = max(at.get("games",      0), 1)
+    hcg = max(ht.get("comp_games", 0), 1)
+    acg = max(at.get("comp_games", 0), 1)
 
     key = tuple(sorted([home_team, away_team]))
     rec = h2h.get(key, {"a_wins": 0, "draws": 0, "b_wins": 0})
@@ -252,29 +307,49 @@ def build_feature_vector(
         h2h_hw = rec["b_wins"] / max(h2h_total, 1)
         h2h_aw = rec["a_wins"] / max(h2h_total, 1)
 
-    rh = ht.get("recent", [])
-    ra = at.get("recent", [])
+    rh   = ht.get("recent",    [])
+    ra   = at.get("recent",    [])
+    rh5  = ht.get("recent_5",  [])
+    ra5  = at.get("recent_5",  [])
+    rh_gd = ht.get("recent_gd", [])
+    ra_gd = at.get("recent_gd", [])
+
+    elo_h = elo_ratings.get(home_team, _ELO_INIT) if elo_ratings else _ELO_INIT
+    elo_a = elo_ratings.get(away_team, _ELO_INIT) if elo_ratings else _ELO_INIT
+    elo_diff = elo_h - elo_a
 
     return {
-        "home_win_rate":      ht.get("wins",           0) / hg,
-        "home_draw_rate":     ht.get("draws",          0) / hg,
-        "home_loss_rate":     ht.get("losses",         0) / hg,
-        "home_avg_scored":    ht.get("goals_scored",   0) / hg,
-        "home_avg_conceded":  ht.get("goals_conceded", 0) / hg,
-        "home_recent_form":   sum(rh) / 30 if rh else 0,
-        "away_win_rate":      at.get("wins",           0) / ag,
-        "away_draw_rate":     at.get("draws",          0) / ag,
-        "away_loss_rate":     at.get("losses",         0) / ag,
-        "away_avg_scored":    at.get("goals_scored",   0) / ag,
-        "away_avg_conceded":  at.get("goals_conceded", 0) / ag,
-        "away_recent_form":   sum(ra) / 30 if ra else 0,
-        "h2h_home_win_rate":  h2h_hw,
-        "h2h_draw_rate":      rec["draws"] / max(h2h_total, 1),
-        "h2h_away_win_rate":  h2h_aw,
-        "h2h_total_games":    h2h_total,
-        "is_neutral":         int(is_neutral),
-        "tournament_tier":    tournament_tier,
-        "home_rank":          home_rank,
-        "away_rank":          away_rank,
-        "rank_diff":          away_rank - home_rank,
+        "home_win_rate":       ht.get("wins",           0) / hg,
+        "home_draw_rate":      ht.get("draws",          0) / hg,
+        "home_loss_rate":      ht.get("losses",         0) / hg,
+        "home_avg_scored":     ht.get("goals_scored",   0) / hg,
+        "home_avg_conceded":   ht.get("goals_conceded", 0) / hg,
+        "home_recent_form":    sum(rh) / (len(rh) * 3) if rh else 0,
+        "away_win_rate":       at.get("wins",           0) / ag,
+        "away_draw_rate":      at.get("draws",          0) / ag,
+        "away_loss_rate":      at.get("losses",         0) / ag,
+        "away_avg_scored":     at.get("goals_scored",   0) / ag,
+        "away_avg_conceded":   at.get("goals_conceded", 0) / ag,
+        "away_recent_form":    sum(ra) / (len(ra) * 3) if ra else 0,
+        "home_comp_win_rate":  ht.get("comp_wins",      0) / hcg,
+        "home_comp_draw_rate": ht.get("comp_draws",     0) / hcg,
+        "away_comp_win_rate":  at.get("comp_wins",      0) / acg,
+        "away_comp_draw_rate": at.get("comp_draws",     0) / acg,
+        "home_recent_form_5":  sum(rh5) / (len(rh5) * 3) if rh5 else 0,
+        "home_recent_gd":      sum(rh_gd) / max(len(rh_gd), 1) if rh_gd else 0,
+        "away_recent_form_5":  sum(ra5) / (len(ra5) * 3) if ra5 else 0,
+        "away_recent_gd":      sum(ra_gd) / max(len(ra_gd), 1) if ra_gd else 0,
+        "h2h_home_win_rate":   h2h_hw,
+        "h2h_draw_rate":       rec["draws"] / max(h2h_total, 1),
+        "h2h_away_win_rate":   h2h_aw,
+        "h2h_total_games":     h2h_total,
+        "is_neutral":          int(is_neutral),
+        "tournament_tier":     tournament_tier,
+        "home_rank":           home_rank,
+        "away_rank":           away_rank,
+        "rank_diff":           away_rank - home_rank,
+        "home_elo":            elo_h,
+        "away_elo":            elo_a,
+        "elo_diff":            elo_diff,
+        "abs_elo_diff":        abs(elo_diff),
     }

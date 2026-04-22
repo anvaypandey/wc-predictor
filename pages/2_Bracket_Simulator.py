@@ -34,10 +34,12 @@ GROUPS_FILE = Path("data/wc2026_groups.json")
 def load_model():
     if not (ARTIFACTS / "model.pkl").exists():
         return None
+    elo_path = ARTIFACTS / "elo_ratings.pkl"
     return (
         joblib.load(ARTIFACTS / "model.pkl"),
         joblib.load(ARTIFACTS / "team_stats.pkl"),
         joblib.load(ARTIFACTS / "h2h.pkl"),
+        joblib.load(elo_path) if elo_path.exists() else {},
     )
 
 
@@ -186,7 +188,7 @@ if artifacts is None:
     st.warning("No trained model found. Run `python train.py` first.")
     st.stop()
 
-model, team_stats, h2h = artifacts
+model, team_stats, h2h, elo_ratings = artifacts
 rankings = load_rankings()
 groups   = load_groups()
 
@@ -227,17 +229,28 @@ if run_sim or "group_results" in st.session_state:
         with st.spinner(f"Running {n_sims} simulations of the group stage..."):
             group_results = simulate_groups(
                 groups, model, team_stats, h2h,
-                n_sims=n_sims, rankings=rankings,
+                n_sims=n_sims, rankings=rankings, elo_ratings=elo_ratings,
             )
             likely_standings = most_likely_group_standings(
-                groups, model, team_stats, h2h, rankings=rankings,
+                groups, model, team_stats, h2h,
+                rankings=rankings, elo_ratings=elo_ratings,
             )
+            bracket = build_r32_bracket(likely_standings, group_results)
+            with st.spinner("Simulating knockout rounds..."):
+                ko_results = simulate_knockout(
+                    bracket, model, team_stats, h2h,
+                    n_sims=n_sims, rankings=rankings, elo_ratings=elo_ratings,
+                )
         st.session_state["group_results"]    = group_results
         st.session_state["likely_standings"] = likely_standings
         st.session_state["n_sims"]           = n_sims
+        st.session_state["bracket"]          = bracket
+        st.session_state["ko_results"]       = ko_results
 
     group_results    = st.session_state["group_results"]
     likely_standings = st.session_state["likely_standings"]
+    bracket          = st.session_state["bracket"]
+    ko_results       = st.session_state["ko_results"]
 
     # ── Group stage results ───────────────────────────────────────────────────
 
@@ -269,13 +282,6 @@ if run_sim or "group_results" in st.session_state:
     # ── Knockout bracket ──────────────────────────────────────────────────────
 
     st.markdown("## 🏟️ Knockout Stage")
-
-    with st.spinner("Simulating knockout rounds..."):
-        bracket = build_r32_bracket(likely_standings, group_results)
-        ko_results = simulate_knockout(
-            bracket, model, team_stats, h2h,
-            n_sims=st.session_state["n_sims"], rankings=rankings,
-        )
 
     # ── Visual bracket tree ───────────────────────────────────────────────────
 
