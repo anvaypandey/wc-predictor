@@ -1,5 +1,7 @@
 import asyncio
 import json
+import logging
+import time
 
 import plotly.graph_objects as go
 from fastapi import APIRouter
@@ -16,6 +18,7 @@ from src.bracket import (
 from src.flags import flag
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 
 def _bracket_figure(ko_results: dict, bracket: list[str]) -> str:
@@ -123,19 +126,24 @@ def _event(data: dict) -> str:
 
 
 async def _stream(n_sims: int):
+    t0 = time.perf_counter()
+    log.info("Simulation started: n_sims=%d", n_sims)
     s = get_state()
 
     yield _event({"type": "progress", "stage": "groups", "pct": 0, "label": "Simulating group stage…"})
 
+    t1 = time.perf_counter()
     group_results = await asyncio.to_thread(
         simulate_groups,
         s.groups, s.model, s.team_stats, s.h2h,
         n_sims, s.rankings, s.elo_ratings,
     )
+    log.info("Group stage done in %.2fs", time.perf_counter() - t1)
 
     yield _event({"type": "progress", "stage": "groups", "pct": 100, "label": "Group stage done"})
     yield _event({"type": "progress", "stage": "knockout", "pct": 0, "label": "Simulating knockout rounds…"})
 
+    t2 = time.perf_counter()
     likely_standings = await asyncio.to_thread(
         most_likely_group_standings,
         s.groups, s.model, s.team_stats, s.h2h, s.rankings, s.elo_ratings,
@@ -146,11 +154,18 @@ async def _stream(n_sims: int):
         bracket, s.model, s.team_stats, s.h2h,
         n_sims, s.rankings, s.elo_ratings,
     )
+    log.info("Knockout stage done in %.2fs", time.perf_counter() - t2)
 
     yield _event({"type": "progress", "stage": "knockout", "pct": 100, "label": "Knockout stage done"})
 
     bracket_chart = await asyncio.to_thread(_bracket_figure, ko_results, bracket)
     win_chart     = await asyncio.to_thread(_win_chart, bracket, ko_results)
+
+    # Log top 3 predicted winners
+    top3 = sorted(ko_results.items(), key=lambda x: x[1].get("Winner", 0), reverse=True)[:3]
+    log.info("Top 3 predicted winners: %s",
+             ", ".join(f"{t}={r['Winner']:.1f}%" for t, r in top3))
+    log.info("Simulation complete in %.2fs total", time.perf_counter() - t0)
 
     yield _event({
         "type": "result",
@@ -167,4 +182,5 @@ async def _stream(n_sims: int):
 
 @router.get("/simulate/stream")
 async def simulate_stream(n_sims: int = 500):
+    log.info("GET /api/simulate/stream  n_sims=%d", n_sims)
     return EventSourceResponse(_stream(n_sims))

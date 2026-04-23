@@ -1,4 +1,6 @@
 import json
+import logging
+import time
 from pathlib import Path
 
 import joblib
@@ -14,6 +16,7 @@ from backend.routers._charts import _DARK_LAYOUT
 from src.prepare import FEATURE_COLS
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 ARTIFACTS = Path("artifacts")
 
 
@@ -127,9 +130,13 @@ def _tournament_chart(df: pd.DataFrame) -> str:
 
 @router.get("/accuracy", response_model=AccuracyResponse)
 def accuracy():
+    t0 = time.perf_counter()
+    log.info("GET /api/accuracy")
     metrics_path = ARTIFACTS / "metrics.json"
     backtest_path = ARTIFACTS / "backtest.pkl"
     if not metrics_path.exists() or not backtest_path.exists():
+        log.error("Accuracy artifacts missing: metrics=%s backtest=%s",
+                  metrics_path.exists(), backtest_path.exists())
         raise HTTPException(status_code=412, detail="Run python train.py first to generate accuracy data")
 
     metrics = json.loads(metrics_path.read_text())
@@ -160,7 +167,10 @@ def accuracy():
         ]
 
     s = get_state()
-    return AccuracyResponse(
+    log.info("Accuracy: cv=%.2f%%  wc=%.2f%%  rows=%d  model=%s  wc_matches=%d",
+             metrics["cv_accuracy_mean"] * 100, wc_acc,
+             metrics.get("n_training_rows", 0), metrics.get("model_type", "?"), len(wc_df))
+    resp = AccuracyResponse(
         cv_accuracy=round(metrics["cv_accuracy_mean"] * 100, 2),
         cv_std=round(metrics["cv_accuracy_std"] * 100, 2),
         n_training_rows=metrics.get("n_training_rows", 0),
@@ -175,3 +185,5 @@ def accuracy():
         calibration_chart=_calibration_chart(df, classes),
         tournament_chart=_tournament_chart(df),
     )
+    log.info("GET /api/accuracy done in %.3fs", time.perf_counter() - t0)
+    return resp

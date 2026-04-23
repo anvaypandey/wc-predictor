@@ -90,13 +90,17 @@ export interface SimResult {
 }
 
 export async function fetchTeams(): Promise<TeamsResponse> {
+  console.log("[api] GET /api/teams");
   const res = await fetch("/api/teams");
   if (!res.ok) {
     let msg = res.statusText;
     try { msg = (await res.json()).detail ?? msg; } catch { /* not JSON */ }
+    console.error("[api] GET /api/teams failed:", msg);
     throw new Error(msg);
   }
-  return res.json();
+  const data = await res.json();
+  console.log(`[api] /api/teams → ${data.teams.length} teams, ${Object.keys(data.groups).length} groups`);
+  return data;
 }
 
 export async function fetchPrediction(
@@ -104,6 +108,7 @@ export async function fetchPrediction(
   away: string,
   neutral: boolean
 ): Promise<PredictResponse> {
+  console.log(`[api] POST /api/predict  home=${home}  away=${away}  neutral=${neutral}`);
   const res = await fetch("/api/predict", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -112,9 +117,12 @@ export async function fetchPrediction(
   if (!res.ok) {
     let msg = res.statusText;
     try { msg = (await res.json()).detail ?? msg; } catch { /* not JSON */ }
+    console.error("[api] /api/predict failed:", msg);
     throw new Error(msg);
   }
-  return res.json();
+  const data = await res.json();
+  console.log(`[api] /api/predict → ${data.predicted} (W=${data.win_prob.toFixed(2)} D=${data.draw_prob.toFixed(2)} L=${data.loss_prob.toFixed(2)})`);
+  return data;
 }
 
 export function streamSimulation(
@@ -123,23 +131,41 @@ export function streamSimulation(
   onResult: (e: SimResult) => void,
   onError: (err: Event) => void
 ): () => void {
+  console.log(`[api] SSE /api/simulate/stream  n_sims=${nSims}`);
   const es = new EventSource(`/api/simulate/stream?n_sims=${nSims}`);
   let done = false;
   es.onmessage = (e) => {
     const msg = JSON.parse(e.data) as SimProgress | SimResult;
-    if (msg.type === "progress") onProgress(msg);
-    else if (msg.type === "result") { done = true; onResult(msg); es.close(); }
+    if (msg.type === "progress") {
+      console.log(`[api] simulation progress: stage=${msg.stage}  pct=${msg.pct}%`);
+      onProgress(msg);
+    } else if (msg.type === "result") {
+      console.log("[api] simulation result received");
+      done = true;
+      onResult(msg);
+      es.close();
+    }
   };
-  es.onerror = (e) => { if (!done) { onError(e); es.close(); } };
+  es.onerror = (e) => {
+    if (!done) {
+      console.error("[api] SSE error:", e);
+      onError(e);
+      es.close();
+    }
+  };
   return () => es.close();
 }
 
 export async function fetchAccuracy(): Promise<AccuracyResponse> {
+  console.log("[api] GET /api/accuracy");
   const res = await fetch("/api/accuracy");
   if (!res.ok) {
     let msg = res.statusText;
     try { msg = (await res.json()).detail ?? msg; } catch { /* not JSON */ }
+    console.error("[api] GET /api/accuracy failed:", msg);
     throw new Error(msg);
   }
-  return res.json();
+  const data = await res.json();
+  console.log(`[api] /api/accuracy → cv=${data.cv_accuracy}%  wc=${data.wc_accuracy}%`);
+  return data;
 }

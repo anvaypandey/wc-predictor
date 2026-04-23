@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -7,6 +8,12 @@ from fastapi.staticfiles import StaticFiles
 
 from backend.state import load_state
 from backend.routers import predict, simulate, accuracy
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 
 @asynccontextmanager

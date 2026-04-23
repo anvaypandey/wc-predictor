@@ -1,4 +1,6 @@
-import shap
+import logging
+import time
+
 import pandas as pd
 import plotly.graph_objects as go
 from fastapi import APIRouter, HTTPException
@@ -10,6 +12,7 @@ from src.prepare import build_feature_vector, FEATURE_COLS
 from src.flags import with_flag
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 
 _FEATURE_LABELS = {
     "home_win_rate": "Home win rate", "home_draw_rate": "Home draw rate",
@@ -91,15 +94,20 @@ def _shap_chart(explainer, classes, X: pd.DataFrame, predicted_class: str) -> st
 @router.get("/teams", response_model=TeamsResponse)
 def teams():
     s = get_state()
+    log.info("GET /api/teams → %d teams", len(s.teams))
     return TeamsResponse(teams=s.teams, rankings=s.rankings, groups=s.groups)
 
 
 @router.post("/predict", response_model=PredictResponse)
 def predict(req: PredictRequest):
+    t0 = time.perf_counter()
+    log.info("POST /api/predict  home=%r  away=%r  neutral=%s", req.home, req.away, req.neutral)
     s = get_state()
     if req.home not in s.team_stats or req.away not in s.team_stats:
+        log.warning("Predict 404: home=%r away=%r", req.home, req.away)
         raise HTTPException(status_code=404, detail="One or both teams not found")
     if req.home == req.away:
+        log.warning("Predict 400: same team selected (%r)", req.home)
         raise HTTPException(status_code=400, detail="Teams must be different")
 
     hr = s.rankings.get(req.home, {}).get("rank", 0)
@@ -126,7 +134,7 @@ def predict(req: PredictRequest):
         total=rec["a_wins"] + rec["draws"] + rec["b_wins"],
     )
 
-    return PredictResponse(
+    resp = PredictResponse(
         home=req.home, away=req.away,
         predicted=predicted,
         win_prob=win_p, draw_prob=draw_p, loss_prob=loss_p,
@@ -136,3 +144,7 @@ def predict(req: PredictRequest):
         prob_chart=_prob_chart(req.home, req.away, win_p, draw_p, loss_p),
         shap_chart=_shap_chart(s.explainer, s.model.classes_, X, predicted),
     )
+    log.info("Predict done: %s vs %s → %s (W=%.2f D=%.2f L=%.2f) in %.3fs",
+             req.home, req.away, predicted, win_p, draw_p, loss_p,
+             time.perf_counter() - t0)
+    return resp
