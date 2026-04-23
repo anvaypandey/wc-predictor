@@ -1,4 +1,5 @@
-import Plot from "react-plotly.js";
+import { useEffect, useRef } from "react";
+
 
 interface Props {
   json: string;
@@ -6,27 +7,42 @@ interface Props {
 }
 
 export default function PlotlyChart({ json, className }: Props) {
-  let fig: { data: Plotly.Data[]; layout: Partial<Plotly.Layout> };
-  try {
-    fig = JSON.parse(json);
-  } catch {
-    return <div className={`${className} flex items-center justify-center text-red-400 text-sm`}>Chart unavailable</div>;
-  }
+  const ref = useRef<HTMLDivElement>(null);
 
-  return (
-    <div className={className}>
-      <Plot
-        data={fig.data}
-        layout={{
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    let fig: { data: unknown[]; layout: Record<string, unknown> };
+    try {
+      fig = JSON.parse(json);
+    } catch {
+      return;
+    }
+
+    import("plotly.js-dist-min").then((module) => {
+      const P = module.default ?? module;
+      P.newPlot(
+        el,
+        fig.data ?? [],
+        {
           ...fig.layout,
           paper_bgcolor: "rgba(0,0,0,0)",
           plot_bgcolor: "rgba(0,0,0,0)",
-          font: { color: "#e0e0e0", ...(fig.layout.font ?? {}) },
-        }}
-        config={{ displayModeBar: false, responsive: true }}
-        style={{ width: "100%", height: "100%" }}
-        useResizeHandler
-      />
-    </div>
-  );
+          font: { color: "#e0e0e0", ...((fig.layout?.font as object) ?? {}) },
+          autosize: true,
+        },
+        { displayModeBar: false, responsive: true }
+      );
+    });
+
+    return () => {
+      import("plotly.js-dist-min").then((module) => {
+        const P = module.default ?? module;
+        P.purge(el);
+      });
+    };
+  }, [json]);
+
+  return <div ref={ref} className={className} style={{ width: "100%", height: "100%" }} />;
 }
