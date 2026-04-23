@@ -59,8 +59,10 @@ WC Predictor/
 │   ├── wc2026_groups.json    # 2026 WC group draw
 │   └── README.md
 ├── tests/
-│   ├── test_prepare.py       # 33 unit tests for feature engineering
-│   └── test_bracket.py       # 19 unit tests for bracket simulation
+│   ├── test_prepare.py       # 55 unit tests for feature engineering
+│   ├── test_bracket.py       # 44 unit tests for bracket simulation
+│   ├── test_scraper.py       # 31 unit tests for rankings scraper
+│   └── test_model.py         # 24 unit tests for model wrappers
 ├── train.py                  # Training pipeline (run once)
 ├── requirements.txt
 ├── render.yaml               # Render deployment config
@@ -69,7 +71,7 @@ WC Predictor/
     └── deploy.yml            # Push-to-main → Render deploy hook
 ```
 
-Artifacts (`artifacts/`) are generated at training time and excluded from the repo.
+Artifacts (`artifacts/`) are generated at training time and committed to the repo. The monthly retrain workflow updates them automatically.
 
 ---
 
