@@ -125,22 +125,51 @@ def _event(data: dict) -> str:
     return json.dumps(data)
 
 
+async def _yield_progress(task: asyncio.Task, q: asyncio.Queue, stage: str, label_prefix: str):
+    """Yield progress events from q while task is running, then drain any remainder."""
+    get_task = None
+    while not task.done():
+        if get_task is None:
+            get_task = asyncio.ensure_future(q.get())
+        done, _ = await asyncio.wait({task, get_task}, return_when=asyncio.FIRST_COMPLETED)
+        if get_task in done:
+            pct = get_task.result()
+            yield _event({"type": "progress", "stage": stage, "pct": pct,
+                          "label": f"{label_prefix} {pct}%"})
+            get_task = None
+    if get_task and not get_task.done():
+        get_task.cancel()
+    while not q.empty():
+        pct = q.get_nowait()
+        yield _event({"type": "progress", "stage": stage, "pct": pct,
+                      "label": f"{label_prefix} {pct}%"})
+
+
 async def _stream(n_sims: int):
     t0 = time.perf_counter()
     log.info("Simulation started: n_sims=%d", n_sims)
     s = get_state()
+    loop = asyncio.get_running_loop()
+    q: asyncio.Queue[int] = asyncio.Queue()
 
+    # ── Group stage ───────────────────────────────────────────────────────
     yield _event({"type": "progress", "stage": "groups", "pct": 0, "label": "Simulating group stage…"})
 
     t1 = time.perf_counter()
-    group_results = await asyncio.to_thread(
+    group_task: asyncio.Task = asyncio.ensure_future(asyncio.to_thread(
         simulate_groups,
         s.groups, s.model, s.team_stats, s.h2h,
         n_sims, s.rankings, s.elo_ratings,
-    )
-    log.info("Group stage done in %.2fs", time.perf_counter() - t1)
+        lambda pct: loop.call_soon_threadsafe(q.put_nowait, pct),
+    ))
+    async for ev in _yield_progress(group_task, q, "groups", "Simulating group stage…"):
+        yield ev
 
+    group_results = group_task.result()
+    log.info("Group stage done in %.2fs", time.perf_counter() - t1)
     yield _event({"type": "progress", "stage": "groups", "pct": 100, "label": "Group stage done"})
+
+    # ── Knockout stage ────────────────────────────────────────────────────
     yield _event({"type": "progress", "stage": "knockout", "pct": 0, "label": "Simulating knockout rounds…"})
 
     t2 = time.perf_counter()
@@ -149,13 +178,18 @@ async def _stream(n_sims: int):
         s.groups, s.model, s.team_stats, s.h2h, s.rankings, s.elo_ratings,
     )
     bracket = build_r32_bracket(likely_standings, group_results)
-    ko_results = await asyncio.to_thread(
+
+    ko_task: asyncio.Task = asyncio.ensure_future(asyncio.to_thread(
         simulate_knockout,
         bracket, s.model, s.team_stats, s.h2h,
         n_sims, s.rankings, s.elo_ratings,
-    )
-    log.info("Knockout stage done in %.2fs", time.perf_counter() - t2)
+        lambda pct: loop.call_soon_threadsafe(q.put_nowait, pct),
+    ))
+    async for ev in _yield_progress(ko_task, q, "knockout", "Simulating knockout rounds…"):
+        yield ev
 
+    ko_results = ko_task.result()
+    log.info("Knockout stage done in %.2fs", time.perf_counter() - t2)
     yield _event({"type": "progress", "stage": "knockout", "pct": 100, "label": "Knockout stage done"})
 
     bracket_chart = await asyncio.to_thread(_bracket_figure, ko_results, bracket)

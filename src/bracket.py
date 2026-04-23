@@ -77,6 +77,7 @@ def simulate_groups(
     n_sims: int = 500,
     rankings: dict | None = None,
     elo_ratings: dict | None = None,
+    progress_cb=None,
 ) -> dict[str, dict]:
     """
     Monte Carlo group stage simulation.
@@ -87,8 +88,11 @@ def simulate_groups(
     pos_count    = defaultdict(lambda: defaultdict(int))
     pts_sum      = defaultdict(float)
     advance_count = defaultdict(int)
+    report_every = max(1, n_sims // 10)
 
-    for _ in range(n_sims):
+    for i in range(n_sims):
+        if progress_cb and i % report_every == 0:
+            progress_cb(int(i / n_sims * 100))
         third_place = []
 
         for group_teams in groups.values():
@@ -165,6 +169,7 @@ def simulate_knockout(
     n_sims: int = 500,
     rankings: dict | None = None,
     elo_ratings: dict | None = None,
+    progress_cb=None,
 ) -> dict[str, dict]:
     """
     Monte Carlo knockout simulation from R32 onwards (32 teams).
@@ -174,8 +179,11 @@ def simulate_knockout(
     """
     round_reach = defaultdict(lambda: defaultdict(int))
     rounds = ["R16", "QF", "SF", "Final", "Winner"]
+    report_every = max(1, n_sims // 10)
 
-    for _ in range(n_sims):
+    for i in range(n_sims):
+        if progress_cb and i % report_every == 0:
+            progress_cb(int(i / n_sims * 100))
         bracket = list(qualifiers)
 
         for round_name in rounds:
