@@ -8,7 +8,7 @@ A machine learning app that predicts the outcome of any **men's international fo
 
 | Page | Description |
 |------|-------------|
-| **Match Predictor** | Win / Draw / Loss probabilities for any two national teams, with SHAP feature explanations, team stats, and head-to-head record |
+| **Match Predictor** | Win / Draw / Loss probabilities for any two national teams, with confidence indicator, SHAP feature explanations, team stats, head-to-head record, and shareable prediction URLs |
 | **Bracket Simulator** | Full 2026 WC Monte Carlo simulation — group stage standings, R32 bracket, knockout round probabilities, predicted champion |
 | **Model Accuracy** | CV accuracy, WC back-test by year, confusion matrix, calibration curve, feature importance, per-tournament accuracy |
 
@@ -72,6 +72,8 @@ WC Predictor/
 ```
 
 Artifacts (`artifacts/`) are generated at training time and committed to the repo. The monthly retrain workflow updates them automatically.
+
+> **Performance note:** `/api/accuracy` responses are cached in memory for 1 hour. The first request builds 5 Plotly figures from the backtest pickle (~1–2 s); subsequent requests within the hour return in <5 ms.
 
 ---
 
@@ -176,6 +178,26 @@ Friendlies are included for rolling stats and ELO updates but excluded from trai
 ### Model Selection
 
 Both XGBoost and LightGBM are evaluated via 5-fold stratified CV on each training run. The model with higher mean CV accuracy is selected and retrained on the full dataset. Mild class weight balancing (35% of full correction) is applied to improve draw recall without sacrificing overall accuracy.
+
+### Shareable Prediction URLs
+
+Every prediction can be shared as a deep link:
+
+```
+/?home=Brazil&away=Argentina&neutral=true
+```
+
+The page pre-fills the team selectors and auto-runs the prediction on load. A **Copy link** button appears after each prediction.
+
+### Confidence Indicator
+
+A badge is shown alongside each predicted outcome based on the margin between the top two outcome probabilities:
+
+| Badge | Condition |
+|-------|-----------|
+| **High confidence** | Top − 2nd ≥ 30 pp (e.g. 70 % / 20 % / 10 %) |
+| **Medium confidence** | 15 pp ≤ margin < 30 pp |
+| **Low confidence** | margin < 15 pp (e.g. 45 % / 35 % / 20 %) |
 
 ### Monte Carlo Simulation
 
