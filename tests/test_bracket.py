@@ -135,13 +135,12 @@ def test_knockout_winner_certain_away():
         assert _knockout_winner("A", "B", m, {}, {}, rankings=None) == "B"
 
 def test_knockout_winner_draw_is_50_50():
-    # With draw probability=1.0 and 50/50 penalty logic, over many trials
-    # the winner should be each team roughly half the time.
+    # With draw probability=1.0, win_p = 0.5 → roughly equal wins over many trials.
+    # Use 2000 trials with wide bounds to avoid seed-dependent flakiness.
     m = _model("Draw")
-    random.seed(0)
-    results = [_knockout_winner("A", "B", m, {}, {}, rankings=None) for _ in range(1000)]
+    results = [_knockout_winner("A", "B", m, {}, {}, rankings=None) for _ in range(2000)]
     a_wins = results.count("A")
-    assert 400 < a_wins < 600, f"Expected ~500 A wins, got {a_wins}"
+    assert 800 < a_wins < 1200, f"Expected ~1000 A wins, got {a_wins}"
 
 
 # ── _simulate_group_once ──────────────────────────────────────────────────────
@@ -326,13 +325,14 @@ def test_simulate_knockout_winner_sums_to_100():
     total = sum(r["Winner"] for r in results.values())
     assert total == pytest.approx(100.0, abs=0.1)
 
-def test_simulate_knockout_r16_sum_equals_100_pct_times_16():
-    # 16 teams advance to R16; each sim contributes 16 R16 advancements → 16 * n_sims
-    # as a percentage: 16 teams should have R16=100% if deterministic model
+def test_simulate_knockout_r16_correct_teams_advance():
+    # Win model: T0 beats T1, T2 beats T3, ... → even-indexed teams always reach R16.
     qualifiers = [f"T{i}" for i in range(32)]
-    results = simulate_knockout(qualifiers, _model("Win"), {}, {}, n_sims=50)
-    r16_total = sum(r["R16"] for r in results.values())
-    assert r16_total == pytest.approx(16 * 100.0 / 32 * 32, rel=0.01)
+    results = simulate_knockout(qualifiers, _model("Win"), {}, {}, n_sims=20)
+    for i in range(0, 32, 2):
+        assert results[f"T{i}"]["R16"] == pytest.approx(100.0), f"T{i} should always reach R16"
+    for i in range(1, 32, 2):
+        assert results[f"T{i}"]["R16"] == pytest.approx(0.0), f"T{i} should never reach R16"
 
 def test_simulate_knockout_certain_winner_wins_all():
     # Model always picks home team → T0 beats T1 in R32, T0 beats T2 in R16, etc.

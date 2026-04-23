@@ -456,6 +456,14 @@ def test_build_feature_vector_win_rates_sum_to_one():
     fv = build_feature_vector("A", "B", True, ts, h2h_s, elo_ratings=elos)
     assert fv["home_win_rate"] + fv["home_draw_rate"] + fv["home_loss_rate"] == pytest.approx(1.0)
 
+def test_build_feature_vector_elo_none_uses_init_rating():
+    # When elo_ratings=None both teams get the initial ELO and diff is zero
+    fv = build_feature_vector("A", "B", True, {}, {}, elo_ratings=None)
+    assert fv["home_elo"]     == pytest.approx(_ELO_INIT)
+    assert fv["away_elo"]     == pytest.approx(_ELO_INIT)
+    assert fv["elo_diff"]     == pytest.approx(0.0)
+    assert fv["abs_elo_diff"] == pytest.approx(0.0)
+
 def test_build_feature_vector_reflects_serialized_stats():
     _, _, team_stats, h2h, elos = build_features(_make_df(
         ("A", "B", 2, 0, False, "FIFA World Cup"),

@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from pandas import Series
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -70,10 +71,11 @@ def test_xgb_predict_proba_non_negative(xgb_fitted):
     m, X, _ = xgb_fitted
     assert (m.predict_proba(X) >= 0).all()
 
-def test_xgb_score_between_0_and_1(xgb_fitted):
-    m, X, y = xgb_fitted
-    s = m.score(X, y)
-    assert 0.0 <= s <= 1.0
+def test_xgb_score_on_own_predictions_is_one(xgb_fitted):
+    # score() should return 1.0 when labels match predictions exactly
+    m, X, _ = xgb_fitted
+    preds = pd.Series(m.predict(X))
+    assert m.score(X, preds) == pytest.approx(1.0)
 
 def test_xgb_feature_importances_shape(xgb_fitted):
     m, _, _ = xgb_fitted
@@ -125,9 +127,10 @@ def test_lgbm_predict_proba_rows_sum_to_one(lgbm_fitted):
     m, X, _ = lgbm_fitted
     np.testing.assert_allclose(m.predict_proba(X).sum(axis=1), 1.0, atol=1e-5)
 
-def test_lgbm_score_between_0_and_1(lgbm_fitted):
-    m, X, y = lgbm_fitted
-    assert 0.0 <= m.score(X, y) <= 1.0
+def test_lgbm_score_on_own_predictions_is_one(lgbm_fitted):
+    m, X, _ = lgbm_fitted
+    preds = pd.Series(m.predict(X))
+    assert m.score(X, preds) == pytest.approx(1.0)
 
 def test_lgbm_feature_importances_shape(lgbm_fitted):
     m, _, _ = lgbm_fitted

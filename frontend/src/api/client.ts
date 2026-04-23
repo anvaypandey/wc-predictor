@@ -124,12 +124,13 @@ export function streamSimulation(
   onError: (err: Event) => void
 ): () => void {
   const es = new EventSource(`/api/simulate/stream?n_sims=${nSims}`);
+  let done = false;
   es.onmessage = (e) => {
     const msg = JSON.parse(e.data) as SimProgress | SimResult;
     if (msg.type === "progress") onProgress(msg);
-    else if (msg.type === "result") { onResult(msg); es.close(); }
+    else if (msg.type === "result") { done = true; onResult(msg); es.close(); }
   };
-  es.onerror = (e) => { onError(e); es.close(); };
+  es.onerror = (e) => { if (!done) { onError(e); es.close(); } };
   return () => es.close();
 }
 
