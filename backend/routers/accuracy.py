@@ -19,6 +19,10 @@ router = APIRouter()
 log = logging.getLogger(__name__)
 ARTIFACTS = Path("artifacts")
 
+_cache: AccuracyResponse | None = None
+_cache_ts: float = 0.0
+_CACHE_TTL = 3600.0
+
 
 def _feature_chart(model) -> str:
     pairs = sorted(zip(FEATURE_COLS, model.feature_importances_), key=lambda x: x[1])
@@ -130,8 +134,13 @@ def _tournament_chart(df: pd.DataFrame) -> str:
 
 @router.get("/accuracy", response_model=AccuracyResponse)
 def accuracy():
+    global _cache, _cache_ts
     t0 = time.perf_counter()
     log.info("GET /api/accuracy")
+
+    if _cache is not None and (time.perf_counter() - _cache_ts) < _CACHE_TTL:
+        log.info("GET /api/accuracy served from cache in %.3fs", time.perf_counter() - t0)
+        return _cache
     metrics_path = ARTIFACTS / "metrics.json"
     backtest_path = ARTIFACTS / "backtest.pkl"
     if not metrics_path.exists() or not backtest_path.exists():
@@ -185,5 +194,7 @@ def accuracy():
         calibration_chart=_calibration_chart(df, classes),
         tournament_chart=_tournament_chart(df),
     )
-    log.info("GET /api/accuracy done in %.3fs", time.perf_counter() - t0)
+    _cache = resp
+    _cache_ts = time.perf_counter()
+    log.info("GET /api/accuracy done in %.3fs (cached)", time.perf_counter() - t0)
     return resp
