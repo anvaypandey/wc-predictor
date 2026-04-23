@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import PlotlyChart from "../components/PlotlyChart";
 import { fetchTeams, fetchPrediction } from "../api/client";
 import type { PredictResponse, TeamsResponse } from "../api/client";
@@ -9,42 +10,77 @@ const OUTCOME_COLORS: Record<string, string> = {
   Loss: "bg-red-700 text-red-100",
 };
 
+function confidenceLabel(win: number, draw: number, loss: number): { label: string; color: string } {
+  const probs = [win, draw, loss].sort((a, b) => b - a);
+  const margin = probs[0] - probs[1];
+  if (margin >= 0.30) return { label: "High confidence", color: "text-green-400" };
+  if (margin >= 0.15) return { label: "Medium confidence", color: "text-yellow-400" };
+  return { label: "Low confidence", color: "text-orange-400" };
+}
+
 export default function MatchPredictor() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [teamsData, setTeamsData] = useState<TeamsResponse | null>(null);
-  const [home, setHome] = useState("");
-  const [away, setAway] = useState("");
-  const [neutral, setNeutral] = useState(true);
+  const [home, setHome] = useState(searchParams.get("home") ?? "");
+  const [away, setAway] = useState(searchParams.get("away") ?? "");
+  const [neutral, setNeutral] = useState(searchParams.get("neutral") !== "false");
   const [result, setResult] = useState<PredictResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    fetchTeams()
-      .then((d) => {
-        setTeamsData(d);
-        if (d.teams.length >= 2) {
-          setHome(d.teams[0]);
-          setAway(d.teams[1]);
-        }
-      })
-      .catch((e) => setError(e.message));
-  }, []);
-
-  async function handlePredict() {
-    if (!home || !away || home === away) {
-      setError("Select two different teams.");
-      return;
-    }
+  const runPrediction = useCallback(async (h: string, a: string, n: boolean) => {
+    if (!h || !a || h === a) return;
     setLoading(true);
     setError("");
     try {
-      const r = await fetchPrediction(home, away, neutral);
+      const r = await fetchPrediction(h, a, n);
       setResult(r);
     } catch (e: unknown) {
       setError((e as Error).message);
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  useEffect(() => {
+    fetchTeams()
+      .then((d) => {
+        setTeamsData(d);
+        const paramHome = searchParams.get("home");
+        const paramAway = searchParams.get("away");
+        if (paramHome && paramAway && paramHome !== paramAway) {
+          const n = searchParams.get("neutral") !== "false";
+          setHome(paramHome);
+          setAway(paramAway);
+          setNeutral(n);
+          runPrediction(paramHome, paramAway, n);
+        } else if (d.teams.length >= 2) {
+          setHome((prev) => prev || d.teams[0]);
+          setAway((prev) => prev || d.teams[1]);
+        }
+      })
+      .catch((e) => setError(e.message));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function handlePredict() {
+    if (!home || !away || home === away) {
+      setError("Select two different teams.");
+      return;
+    }
+    setSearchParams({ home, away, neutral: String(neutral) });
+    runPrediction(home, away, neutral);
+  }
+
+  function handleCopyLink() {
+    const url = new URL(window.location.href);
+    url.searchParams.set("home", home);
+    url.searchParams.set("away", away);
+    url.searchParams.set("neutral", String(neutral));
+    navigator.clipboard.writeText(url.toString());
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   }
 
   const teams = teamsData?.teams ?? [];
@@ -86,21 +122,31 @@ export default function MatchPredictor() {
           />
           <span className="text-[#ccc] text-sm">Neutral venue</span>
         </label>
-        <button
-          className="px-6 py-2.5 bg-[#f39c12] text-black font-semibold rounded-lg hover:bg-[#e67e22] transition-colors disabled:opacity-50"
-          onClick={handlePredict}
-          disabled={loading || teams.length === 0}
-        >
-          {loading ? "Predicting…" : "Predict"}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            className="px-6 py-2.5 bg-[#f39c12] text-black font-semibold rounded-lg hover:bg-[#e67e22] transition-colors disabled:opacity-50"
+            onClick={handlePredict}
+            disabled={loading || teams.length === 0}
+          >
+            {loading ? "Predicting…" : "Predict"}
+          </button>
+          {result && (
+            <button
+              className="px-4 py-2.5 bg-[#1a1d27] border border-[#2e303a] text-[#ccc] text-sm rounded-lg hover:border-[#f39c12] hover:text-white transition-colors"
+              onClick={handleCopyLink}
+            >
+              {copied ? "Copied!" : "Copy link"}
+            </button>
+          )}
+        </div>
         {error && <p className="text-red-400 text-sm">{error}</p>}
       </div>
 
       {/* Result */}
       {result && (
         <div className="space-y-6">
-          {/* Outcome badge */}
-          <div className="flex items-center gap-4">
+          {/* Outcome badge + confidence */}
+          <div className="flex items-center gap-3 flex-wrap">
             <span className="text-xl font-semibold text-white">
               {result.home} vs {result.away}
             </span>
@@ -108,6 +154,10 @@ export default function MatchPredictor() {
               {result.predicted === "Win" ? `${result.home} Win` :
                result.predicted === "Loss" ? `${result.away} Win` : "Draw"}
             </span>
+            {(() => {
+              const c = confidenceLabel(result.win_prob, result.draw_prob, result.loss_prob);
+              return <span className={`text-sm font-medium ${c.color}`}>{c.label}</span>;
+            })()}
           </div>
 
           {/* Prob chart */}
