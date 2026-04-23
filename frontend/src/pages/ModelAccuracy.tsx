@@ -28,7 +28,7 @@ export default function ModelAccuracy() {
     <div className="max-w-5xl mx-auto px-4 py-8 text-[#888]">Loading…</div>
   );
 
-  const matches: WCMatch[] = selectedYear != null ? (data.backtest_by_year[selectedYear] ?? []) : [];
+  const matches: WCMatch[] = selectedYear != null ? (data.backtest_by_year[String(selectedYear)] ?? []) : [];
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 space-y-8">

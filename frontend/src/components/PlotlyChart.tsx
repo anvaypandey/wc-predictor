@@ -6,7 +6,13 @@ interface Props {
 }
 
 export default function PlotlyChart({ json, className }: Props) {
-  const fig = JSON.parse(json) as { data: Plotly.Data[]; layout: Partial<Plotly.Layout> };
+  let fig: { data: Plotly.Data[]; layout: Partial<Plotly.Layout> };
+  try {
+    fig = JSON.parse(json);
+  } catch {
+    return <div className={`${className} flex items-center justify-center text-red-400 text-sm`}>Chart unavailable</div>;
+  }
+
   return (
     <div className={className}>
       <Plot

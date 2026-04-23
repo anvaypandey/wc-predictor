@@ -53,7 +53,7 @@ export interface AccuracyResponse {
   wc_accuracy: number;
   wc_matches: number;
   wc_years: number[];
-  backtest_by_year: Record<number, WCMatch[]>;
+  backtest_by_year: Record<string, WCMatch[]>;
   feature_chart: string;
   confusion_chart: string;
   wc_year_chart: string;
